@@ -1,0 +1,34 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: iac-registry-backend
+    volumes:
+      - registry-data:/app/data
+    environment:
+      - GIN_MODE=release
+      - DB_PATH=/app/data/registry.db
+    restart: unless-stopped
+    networks:
+      - registry-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: iac-registry-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - registry-network
+
+volumes:
+  registry-data:
+
+networks:
+  registry-network:
+    driver: bridge
