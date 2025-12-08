@@ -141,30 +141,6 @@ export default function ProvidersPage() {
         </div>
       )}
 
-      {/* Usage instructions */}
-      <div className="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-4 mt-8">
-        <h3 className="text-sm font-medium text-purple-800 dark:text-purple-200 mb-2">
-          Usage in Terraform
-        </h3>
-        <code className="text-xs text-purple-700 dark:text-purple-300 block">
-          terraform {'{'}
-          <br />
-          &nbsp;&nbsp;required_providers {'{'}
-          <br />
-          &nbsp;&nbsp;&nbsp;&nbsp;example = {'{'}
-          <br />
-          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;source  = "localhost:9080/NAMESPACE/NAME"
-          <br />
-          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;version = "1.0.0"
-          <br />
-          &nbsp;&nbsp;&nbsp;&nbsp;{'}'}
-          <br />
-          &nbsp;&nbsp;{'}'}
-          <br />
-          {'}'}
-        </code>
-      </div>
-
       {/* Create Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
