@@ -1,11 +1,11 @@
 import axios from 'axios';
-import type { 
-  Namespace, 
-  NamespaceCreate, 
-  APIKey, 
+import type {
+  Namespace,
+  NamespaceCreate,
+  APIKey,
   APIKeyCreate,
-  Module, 
-  ModuleCreate, 
+  Module,
+  ModuleCreate,
   ModuleFromGitCreate,
   ModuleVersion,
   GitTag,
@@ -30,7 +30,7 @@ export const namespacesApi = {
   create: (data: NamespaceCreate) => api.post<Namespace>('/namespaces', data).then(res => res.data),
   update: (id: string, data: Partial<NamespaceCreate>) => api.patch<Namespace>(`/namespaces/${id}`, data).then(res => res.data),
   delete: (id: string) => api.delete(`/namespaces/${id}`).then(res => res.data),
-  
+
   // API Keys (for Terraform CLI access)
   getAPIKeys: (namespaceId: string) => api.get<APIKey[]>(`/namespaces/${namespaceId}/api-keys`).then(res => res.data || []),
   createAPIKey: (namespaceId: string, data: APIKeyCreate) => api.post<APIKey>(`/namespaces/${namespaceId}/api-keys`, data).then(res => res.data),
@@ -54,11 +54,11 @@ export const modulesApi = {
     return api.get<{ content: string }>(`/modules/${id}/readme`, { params }).then(res => res.data);
   },
   syncTags: (id: string) => api.post<{ message: string; tags_found: number; tags_added: number }>(`/modules/${id}/sync-tags`).then(res => res.data),
-  addVersion: (id: string, data: { version: string; enabled?: boolean; subdir?: string }) => 
+  addVersion: (id: string, data: { version: string; enabled?: boolean; subdir?: string }) =>
     api.post<ModuleVersion>(`/modules/${id}/versions`, data).then(res => res.data),
   toggleVersion: (id: string, versionId: string, enabled: boolean) =>
     api.patch<{ message: string; enabled: boolean }>(`/modules/${id}/versions/${versionId}`, { enabled }).then(res => res.data),
-  deleteVersion: (id: string, versionId: string) => 
+  deleteVersion: (id: string, versionId: string) =>
     api.delete(`/modules/${id}/versions/${versionId}`).then(res => res.data),
 };
 
@@ -78,13 +78,13 @@ export const providersApi = {
     return api.get<{ content: string }>(`/providers/${id}/readme`, { params }).then(res => res.data);
   },
   syncTags: (id: string) => api.post<{ message: string; tags_found: number; tags_added: number }>(`/providers/${id}/sync-tags`).then(res => res.data),
-  addVersion: (id: string, data: { version: string; protocols?: string[] }) => 
+  addVersion: (id: string, data: { version: string; protocols?: string[] }) =>
     api.post<ProviderVersion>(`/providers/${id}/versions`, data).then(res => res.data),
   toggleVersion: (id: string, versionId: string, enabled: boolean) =>
     api.patch<{ message: string; enabled: boolean }>(`/providers/${id}/versions/${versionId}`, { enabled }).then(res => res.data),
-  deleteVersion: (id: string, versionId: string) => 
+  deleteVersion: (id: string, versionId: string) =>
     api.delete(`/providers/${id}/versions/${versionId}`).then(res => res.data),
-  
+
   // Platforms (binaries per OS/arch)
   getPlatforms: (id: string, versionId: string) =>
     api.get<ProviderPlatform[]>(`/providers/${id}/versions/${versionId}/platforms`).then(res => res.data || []),
@@ -92,7 +92,7 @@ export const providersApi = {
     api.post<ProviderPlatform>(`/providers/${id}/versions/${versionId}/platforms`, data).then(res => res.data),
   deletePlatform: (id: string, versionId: string, platformId: string) =>
     api.delete(`/providers/${id}/versions/${versionId}/platforms/${platformId}`).then(res => res.data),
-  
+
   // Upload platform binary (zip file)
   uploadPlatform: (id: string, versionId: string, os: string, arch: string, file: File) => {
     const formData = new FormData();

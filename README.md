@@ -1,19 +1,37 @@
 # Terraform Private Registry
 
-A self-hosted Terraform private registry that supports both modules and providers. This tool allows you to host your own Terraform registry with a simple web interface for managing modules and providers.
+A self-hosted private registry for Terraform that supports both modules and providers. Host your own Terraform registry compatible with the official protocol, featuring a web interface for management and automatic synchronization from Git repositories.
 
-## Features
+## What does this application do?
 
-- **Module Registry**: Host and manage Terraform modules
-- **Provider Registry**: Host and manage Terraform providers
-- **Git Integration**: Automatically sync versions from Git tags
-- **GPG Signing**: Automatic GPG signing for provider binaries
-- **Web UI**: Modern, responsive interface for registry management
-- **API Management**: RESTful API for programmatic access
-- **Dark Mode**: Built-in dark mode support
-- **Namespace Support**: Organize modules and providers by namespace
-- **Version Control**: Enable/disable specific versions
-- **README Display**: Automatic README fetching from repositories
+This platform allows you to:
+
+- **Host private Terraform modules**: Publish and version your internal Terraform modules
+- **Host private Terraform providers**: Distribute custom providers with automatic GPG signing
+- **Git synchronization**: Automatically import versions from Git tags
+- **Visual management**: Modern web interface to manage modules, providers, and versions
+- **Terraform CLI compatible**: Works directly with `terraform init` without modifications
+- **Multi-namespace**: Organize resources by teams or organizations
+- **Version control**: Enable/disable specific versions as needed
+
+## Architecture
+
+```
+┌─────────────┐      ┌──────────────┐      ┌─────────────┐
+│  Terraform  │─────▶│   Frontend   │─────▶│   Backend   │
+│     CLI     │      │ (React + TS) │      │  (Go + DB)  │
+└─────────────┘      └──────────────┘      └─────────────┘
+                            │                      │
+                            │                      ▼
+                            │              ┌──────────────┐
+                            └─────────────▶│ Git Repos    │
+                                           └──────────────┘
+```
+
+- **Frontend**: React + TypeScript + Vite + Tailwind CSS
+- **Backend**: REST API in Go with SQLite database
+- **Synchronization**: Automatic Git repo cloning to extract tags/versions
+- **GPG Signing**: Automatic generation and signing of provider binaries
 
 ## Quick Start
 
@@ -26,8 +44,8 @@ A self-hosted Terraform private registry that supports both modules and provider
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/iac-tool.git
-cd iac-tool
+git clone https://github.com/asensionacher/private-tf-platform.git
+cd private-tf-platform
 ```
 
 2. Start the services:

@@ -2,6 +2,7 @@ package api
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -120,7 +121,7 @@ func GetModules(c *gin.Context) {
 
 	query := `
 		SELECT m.id, m.namespace_id, m.name, m.provider, m.description, m.source_url, 
-			   m.created_at, m.updated_at, n.name as namespace
+			   m.synced, m.sync_error, m.created_at, m.updated_at, n.name as namespace
 		FROM modules m
 		JOIN namespaces n ON m.namespace_id = n.id
 	`
@@ -144,7 +145,7 @@ func GetModules(c *gin.Context) {
 	for rows.Next() {
 		var mod models.ModuleWithNamespace
 		if err := rows.Scan(&mod.ID, &mod.NamespaceID, &mod.Name, &mod.Provider, &mod.Description,
-			&mod.SourceURL, &mod.CreatedAt, &mod.UpdatedAt, &mod.Namespace); err != nil {
+			&mod.SourceURL, &mod.Synced, &mod.SyncError, &mod.CreatedAt, &mod.UpdatedAt, &mod.Namespace); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"errors": []string{err.Error()}})
 			return
 		}
@@ -161,12 +162,12 @@ func GetModule(c *gin.Context) {
 	var mod models.ModuleWithNamespace
 	err := database.DB.QueryRow(`
 		SELECT m.id, m.namespace_id, m.name, m.provider, m.description, m.source_url, 
-			   m.created_at, m.updated_at, n.name as namespace
+			   m.synced, m.sync_error, m.created_at, m.updated_at, n.name as namespace
 		FROM modules m
 		JOIN namespaces n ON m.namespace_id = n.id
 		WHERE m.id = ?
 	`, id).Scan(&mod.ID, &mod.NamespaceID, &mod.Name, &mod.Provider, &mod.Description,
-		&mod.SourceURL, &mod.CreatedAt, &mod.UpdatedAt, &mod.Namespace)
+		&mod.SourceURL, &mod.Synced, &mod.SyncError, &mod.CreatedAt, &mod.UpdatedAt, &mod.Namespace)
 
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"errors": []string{"Module not found"}})
@@ -517,6 +518,12 @@ func CreateModuleFromGit(c *gin.Context) {
 		return
 	}
 
+	// Verify the repository exists and is accessible
+	if err := git.ValidateGitRepository(input.GitURL); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Git repository validation failed: " + err.Error()})
+		return
+	}
+
 	// Verify namespace exists
 	var namespaceName string
 	err := database.DB.QueryRow("SELECT name FROM namespaces WHERE id = ?", input.NamespaceID).Scan(&namespaceName)
@@ -547,14 +554,19 @@ func CreateModuleFromGit(c *gin.Context) {
 	}
 
 	_, err = database.DB.Exec(`
-		INSERT INTO modules (id, namespace_id, name, provider, description, source_url, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO modules (id, namespace_id, name, provider, description, source_url, synced, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, FALSE, ?, ?)
 	`, moduleID, input.NamespaceID, input.Name, input.Provider, input.Description, sourceURL, now, now)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Automatically sync tags in background
+	go func() {
+		syncModuleTagsBackground(moduleID, input.GitURL, input.Subdir)
+	}()
 
 	response := models.ModuleWithNamespace{
 		Module: models.Module{
@@ -626,14 +638,81 @@ func SyncModuleTags(c *gin.Context) {
 		}
 	}
 
-	// Update module updated_at
-	database.DB.Exec("UPDATE modules SET updated_at = ? WHERE id = ?", now, moduleID)
+	// Update module: mark as synced and clear sync errors
+	database.DB.Exec("UPDATE modules SET updated_at = ?, synced = TRUE, sync_error = NULL WHERE id = ?", now, moduleID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":    "Tags synced successfully",
 		"tags_found": len(tags),
 		"tags_added": addedCount,
 	})
+}
+
+// syncModuleTagsBackground syncs tags in the background
+func syncModuleTagsBackground(moduleID string, gitURL string, subdir *string) {
+	log.Printf("Starting background tag sync for module %s", moduleID)
+
+	// Defer recovery to handle panics
+	defer func() {
+		if r := recover(); r != nil {
+			errorMsg := fmt.Sprintf("Panic during sync: %v", r)
+			log.Printf("Module %s sync panic: %v", moduleID, r)
+			database.DB.Exec("UPDATE modules SET synced = TRUE, sync_error = ?, updated_at = ? WHERE id = ?",
+				errorMsg, time.Now(), moduleID)
+		}
+	}()
+
+	tags, err := git.GetTags(gitURL)
+	if err != nil {
+		errorMsg := fmt.Sprintf("Failed to fetch tags: %v", err)
+		log.Printf("Failed to fetch tags for module %s: %v", moduleID, err)
+		// Mark as synced but with error so it stops trying automatically
+		database.DB.Exec("UPDATE modules SET synced = TRUE, sync_error = ?, updated_at = ? WHERE id = ?",
+			errorMsg, time.Now(), moduleID)
+		return
+	}
+
+	if len(tags) == 0 {
+		errorMsg := "No valid version tags found in repository"
+		log.Printf("No tags found for module %s", moduleID)
+		database.DB.Exec("UPDATE modules SET synced = TRUE, sync_error = ?, updated_at = ? WHERE id = ?",
+			errorMsg, time.Now(), moduleID)
+		return
+	}
+
+	now := time.Now()
+	addedCount := 0
+
+	for _, tag := range tags {
+		var existingID string
+		err := database.DB.QueryRow(`
+			SELECT id FROM module_versions WHERE module_id = ? AND version = ?
+		`, moduleID, tag.Version).Scan(&existingID)
+
+		if err != nil {
+			versionID := generateID()
+			downloadURL := buildGitDownloadURL(gitURL, tag.Name, subdir)
+
+			var tagDate interface{}
+			if !tag.TagDate.IsZero() {
+				tagDate = tag.TagDate
+			}
+
+			_, err = database.DB.Exec(`
+				INSERT INTO module_versions (id, module_id, version, download_url, enabled, tag_date, created_at)
+				VALUES (?, ?, ?, ?, FALSE, ?, ?)
+			`, versionID, moduleID, tag.Version, downloadURL, tagDate, now)
+
+			if err == nil {
+				addedCount++
+			}
+		}
+	}
+
+	// Update module: mark as synced and clear any previous errors
+	database.DB.Exec("UPDATE modules SET updated_at = ?, synced = TRUE, sync_error = NULL WHERE id = ?", now, moduleID)
+
+	log.Printf("Background tag sync completed for module %s: %d tags found, %d added", moduleID, len(tags), addedCount)
 }
 
 // GetModuleGitTags fetches available tags from the Git repository
@@ -875,23 +954,6 @@ func parseSourceURL(sourceURL string) (string, *string) {
 		return gitURL, &subdir
 	}
 	return sourceURL, nil
-}
-
-// isValidGitURL validates that the URL is a valid Git repository URL
-func isValidGitURL(url string) bool {
-	// Accept https:// URLs
-	if strings.HasPrefix(url, "https://") {
-		return true
-	}
-	// Accept git@ SSH URLs
-	if strings.HasPrefix(url, "git@") {
-		return true
-	}
-	// Accept git:// URLs
-	if strings.HasPrefix(url, "git://") {
-		return true
-	}
-	return false
 }
 
 // isValidVersion validates that the version follows semver-like format

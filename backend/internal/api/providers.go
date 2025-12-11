@@ -290,7 +290,7 @@ func GetProviders(c *gin.Context) {
 	namespaceFilter := c.Query("namespace")
 
 	query := `
-		SELECT p.id, p.namespace_id, p.name, p.description, p.created_at, p.updated_at, 
+		SELECT p.id, p.namespace_id, p.name, p.description, p.synced, p.created_at, p.updated_at, 
 			   n.name as namespace
 		FROM providers p
 		JOIN namespaces n ON p.namespace_id = n.id
@@ -314,7 +314,7 @@ func GetProviders(c *gin.Context) {
 	providers := make([]models.ProviderWithNamespace, 0)
 	for rows.Next() {
 		var p models.ProviderWithNamespace
-		if err := rows.Scan(&p.ID, &p.NamespaceID, &p.Name, &p.Description,
+		if err := rows.Scan(&p.ID, &p.NamespaceID, &p.Name, &p.Description, &p.Synced,
 			&p.CreatedAt, &p.UpdatedAt, &p.Namespace); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"errors": []string{err.Error()}})
 			return
@@ -331,12 +331,12 @@ func GetProvider(c *gin.Context) {
 
 	var p models.ProviderWithNamespace
 	err := database.DB.QueryRow(`
-		SELECT p.id, p.namespace_id, p.name, p.description, p.created_at, p.updated_at,
+		SELECT p.id, p.namespace_id, p.name, p.description, p.synced, p.created_at, p.updated_at,
 			   n.name as namespace
 		FROM providers p
 		JOIN namespaces n ON p.namespace_id = n.id
 		WHERE p.id = ?
-	`, id).Scan(&p.ID, &p.NamespaceID, &p.Name, &p.Description,
+	`, id).Scan(&p.ID, &p.NamespaceID, &p.Name, &p.Description, &p.Synced,
 		&p.CreatedAt, &p.UpdatedAt, &p.Namespace)
 
 	if err != nil {
@@ -618,6 +618,12 @@ func CreateProviderFromGit(c *gin.Context) {
 		return
 	}
 
+	// Verify the repository exists and is accessible
+	if err := git.ValidateGitRepository(input.GitURL); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Git repository validation failed: " + err.Error()})
+		return
+	}
+
 	// Verify namespace exists
 	var namespaceName string
 	err := database.DB.QueryRow("SELECT name FROM namespaces WHERE id = ?", input.NamespaceID).Scan(&namespaceName)
@@ -642,14 +648,19 @@ func CreateProviderFromGit(c *gin.Context) {
 	providerID := generateID()
 
 	_, err = database.DB.Exec(`
-		INSERT INTO providers (id, namespace_id, name, description, source_url, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO providers (id, namespace_id, name, description, source_url, synced, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, FALSE, ?, ?)
 	`, providerID, input.NamespaceID, input.Name, input.Description, input.GitURL, now, now)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Automatically sync tags and generate documentation
+	go func() {
+		syncProviderTagsBackground(providerID, input.GitURL)
+	}()
 
 	response := models.ProviderWithNamespace{
 		Provider: models.Provider{
@@ -811,6 +822,53 @@ func DeleteProviderVersionByID(c *gin.Context) {
 // Git-based Provider Management (similar to modules)
 // ============================================================================
 
+// syncProviderTagsBackground syncs tags in the background
+func syncProviderTagsBackground(providerID string, sourceURL string) {
+	log.Printf("Starting background tag sync for provider %s", providerID)
+
+	// Fetch tags from Git
+	tags, err := git.GetTags(sourceURL)
+	if err != nil {
+		log.Printf("Failed to fetch tags for provider %s: %v", providerID, err)
+		return
+	}
+
+	now := time.Now()
+	addedCount := 0
+
+	// Add each tag as a version (if not exists)
+	for _, tag := range tags {
+		var existingID string
+		err := database.DB.QueryRow(`
+			SELECT id FROM provider_versions WHERE provider_id = ? AND version = ?
+		`, providerID, tag.Version).Scan(&existingID)
+
+		if err != nil { // Version doesn't exist, create it
+			versionID := generateID()
+			protocolsJSON, _ := json.Marshal([]string{"5.0"})
+
+			var tagDate interface{}
+			if !tag.TagDate.IsZero() {
+				tagDate = tag.TagDate
+			}
+
+			_, err = database.DB.Exec(`
+				INSERT INTO provider_versions (id, provider_id, version, protocols, enabled, tag_date, created_at)
+				VALUES (?, ?, ?, ?, FALSE, ?, ?)
+			`, versionID, providerID, tag.Version, string(protocolsJSON), tagDate, now)
+
+			if err == nil {
+				addedCount++
+			}
+		}
+	}
+
+	// Update provider updated_at and mark as synced
+	database.DB.Exec("UPDATE providers SET updated_at = ?, synced = TRUE WHERE id = ?", now, providerID)
+
+	log.Printf("Background tag sync completed for provider %s: %d tags found, %d added", providerID, len(tags), addedCount)
+}
+
 // SyncProviderTags fetches tags from the Git repository and syncs them with provider versions
 // POST /api/providers/:id/sync-tags
 func SyncProviderTags(c *gin.Context) {
@@ -904,7 +962,7 @@ func GetProviderGitTags(c *gin.Context) {
 	c.JSON(http.StatusOK, tags)
 }
 
-// GetProviderReadme fetches the README.md from the provider's Git repository
+// GetProviderReadme fetches the README from the provider's Git repository
 // GET /api/providers/:id/readme
 func GetProviderReadme(c *gin.Context) {
 	providerID := c.Param("id")
@@ -923,7 +981,7 @@ func GetProviderReadme(c *gin.Context) {
 		return
 	}
 
-	// Fetch README
+	// Fetch README from Git
 	readme, err := git.GetReadme(*sourceURL, ref)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "README not found: " + err.Error()})

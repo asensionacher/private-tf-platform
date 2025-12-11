@@ -9,6 +9,7 @@ type Provider struct {
 	Name        string    `json:"name"`
 	Description *string   `json:"description,omitempty"`
 	SourceURL   *string   `json:"source_url,omitempty"`
+	Synced      bool      `json:"synced"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }

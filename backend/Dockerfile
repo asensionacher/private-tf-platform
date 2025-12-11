@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o iac-tool .
 # Final stage
 FROM alpine:3.19
 
-# Install git for fetching tags, openssh for git ssh, and gnupg for signing
+# Install dependencies
 RUN apk add --no-cache git ca-certificates openssh-client gnupg
 
 WORKDIR /app

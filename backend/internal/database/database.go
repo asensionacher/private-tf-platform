@@ -69,6 +69,7 @@ func createTables() error {
 		provider TEXT NOT NULL,
 		description TEXT,
 		source_url TEXT,
+		synced BOOLEAN DEFAULT FALSE,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (namespace_id) REFERENCES namespaces(id) ON DELETE CASCADE,
@@ -97,6 +98,7 @@ func createTables() error {
 		name TEXT NOT NULL,
 		description TEXT,
 		source_url TEXT,
+		synced BOOLEAN DEFAULT FALSE,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (namespace_id) REFERENCES namespaces(id) ON DELETE CASCADE,
@@ -179,6 +181,18 @@ func runMigrations() error {
 
 	// Add tag_date column to provider_versions if not exists
 	DB.Exec(`ALTER TABLE provider_versions ADD COLUMN tag_date DATETIME`)
+
+	// Add synced column to providers if not exists
+	DB.Exec(`ALTER TABLE providers ADD COLUMN synced BOOLEAN DEFAULT FALSE`)
+
+	// Add synced column to modules if not exists
+	DB.Exec(`ALTER TABLE modules ADD COLUMN synced BOOLEAN DEFAULT FALSE`)
+
+	// Add sync_error column to modules if not exists
+	DB.Exec(`ALTER TABLE modules ADD COLUMN sync_error TEXT`)
+
+	// Add sync_error column to providers if not exists
+	DB.Exec(`ALTER TABLE providers ADD COLUMN sync_error TEXT`)
 
 	return nil
 }

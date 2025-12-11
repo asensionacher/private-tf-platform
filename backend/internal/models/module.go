@@ -10,6 +10,8 @@ type Module struct {
 	Provider    string    `json:"provider"` // e.g., "aws", "azure", "gcp"
 	Description *string   `json:"description,omitempty"`
 	SourceURL   *string   `json:"source_url,omitempty"` // Optional source repository
+	Synced      bool      `json:"synced"`
+	SyncError   *string   `json:"sync_error,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }

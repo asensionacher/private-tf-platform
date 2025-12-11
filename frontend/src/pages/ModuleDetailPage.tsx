@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Box, Tag, ExternalLink, Copy, RefreshCw, Check, Eye, EyeOff, Trash2, FileText } from 'lucide-react';
@@ -28,16 +28,28 @@ export default function ModuleDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { theme } = useTheme();
-  
+
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [selectedVersion, setSelectedVersion] = useState<string | undefined>(undefined);
 
   const { data: module, isLoading: moduleLoading } = useQuery({
     queryKey: ['module', id],
     queryFn: () => modulesApi.getById(id!),
     enabled: !!id,
   });
+
+  // Auto-refresh when module is not synced yet
+  useEffect(() => {
+    if (module && !module.synced) {
+      const interval = setInterval(() => {
+        queryClient.invalidateQueries({ queryKey: ['module', id] });
+      }, 3000); // Check every 3 seconds
+
+      return () => clearInterval(interval);
+    }
+  }, [module, id, queryClient]);
 
   const { data: versionsData, isLoading: versionsLoading } = useQuery({
     queryKey: ['module-versions', id],
@@ -46,8 +58,8 @@ export default function ModuleDetailPage() {
   });
 
   const { data: readmeData, isLoading: readmeLoading } = useQuery({
-    queryKey: ['module-readme', id],
-    queryFn: () => modulesApi.getReadme(id!),
+    queryKey: ['module-readme', id, selectedVersion],
+    queryFn: () => modulesApi.getReadme(id!, selectedVersion),
     enabled: !!id,
   });
 
@@ -69,7 +81,7 @@ export default function ModuleDetailPage() {
   });
 
   const toggleVersionMutation = useMutation({
-    mutationFn: ({ versionId, enabled }: { versionId: string; enabled: boolean }) => 
+    mutationFn: ({ versionId, enabled }: { versionId: string; enabled: boolean }) =>
       modulesApi.toggleVersion(id!, versionId, enabled),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['module-versions', id] });
@@ -114,6 +126,53 @@ export default function ModuleDetailPage() {
     return (
       <div className="text-center py-12">
         <p className="text-gray-500">Module not found</p>
+      </div>
+    );
+  }
+
+  // Show syncing message if module is not yet synced
+  if (!module.synced) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <button
+              onClick={() => navigate('/modules')}
+              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
+            >
+              <ArrowLeft className="h-5 w-5 text-gray-600 dark:text-gray-400" />
+            </button>
+            <div className="flex items-center">
+              <Box className="h-10 w-10 text-gray-400" />
+              <div className="ml-4">
+                <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+                  {module.namespace}/{module.provider}/{module.name}
+                </h1>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  {module.description || 'No description'}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-8 text-center">
+          <div className="flex justify-center mb-4">
+            <svg className="animate-spin h-12 w-12 text-yellow-600 dark:text-yellow-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          </div>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+            Synchronizing Tags
+          </h2>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+            Please wait while we synchronize the tags from the Git repository. This may take a few moments.
+          </p>
+          <p className="text-xs text-gray-500 dark:text-gray-500">
+            The module will be available once the synchronization is complete.
+          </p>
+        </div>
       </div>
     );
   }
@@ -175,7 +234,7 @@ export default function ModuleDetailPage() {
               )}
             </button>
             <pre className="text-sm text-gray-700 dark:text-gray-300">
-{`module "example" {
+              {`module "example" {
   source  = "${moduleSource}"
   version = "${enabledVersions[0]?.version || '1.0.0'}"
 }`}
@@ -248,15 +307,14 @@ export default function ModuleDetailPage() {
           </div>
 
           {syncMessage && (
-            <div className={`mb-4 p-3 rounded-lg text-sm ${
-              syncMessage.includes('Failed') 
-                ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
-                : 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
-            }`}>
+            <div className={`mb-4 p-3 rounded-lg text-sm ${syncMessage.includes('Failed')
+              ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
+              : 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
+              }`}>
               {syncMessage}
             </div>
           )}
-          
+
           {versionsLoading ? (
             <div className="flex justify-center py-8">
               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-600"></div>
@@ -276,19 +334,17 @@ export default function ModuleDetailPage() {
               {versions.map((version) => (
                 <li
                   key={version.id}
-                  className={`flex items-center justify-between py-2 px-3 rounded group transition-colors ${
-                    version.enabled 
-                      ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800' 
-                      : 'bg-gray-50 dark:bg-gray-900 border border-transparent'
-                  }`}
+                  className={`flex items-center justify-between py-2 px-3 rounded group transition-colors ${version.enabled
+                    ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800'
+                    : 'bg-gray-50 dark:bg-gray-900 border border-transparent'
+                    }`}
                 >
                   <div className="flex items-center">
                     <Tag className={`h-4 w-4 mr-2 ${version.enabled ? 'text-green-500' : 'text-gray-400'}`} />
-                    <span className={`text-sm font-medium ${
-                      version.enabled 
-                        ? 'text-green-700 dark:text-green-300' 
-                        : 'text-gray-600 dark:text-gray-400'
-                    }`}>
+                    <span className={`text-sm font-medium ${version.enabled
+                      ? 'text-green-700 dark:text-green-300'
+                      : 'text-gray-600 dark:text-gray-400'
+                      }`}>
                       {version.version}
                     </span>
                     {version.enabled && (
@@ -299,15 +355,14 @@ export default function ModuleDetailPage() {
                   </div>
                   <div className="flex items-center gap-1">
                     <button
-                      onClick={() => toggleVersionMutation.mutate({ 
-                        versionId: version.id, 
-                        enabled: !version.enabled 
+                      onClick={() => toggleVersionMutation.mutate({
+                        versionId: version.id,
+                        enabled: !version.enabled
                       })}
-                      className={`p-1.5 rounded transition-colors ${
-                        version.enabled 
-                          ? 'text-green-600 hover:bg-green-100 dark:hover:bg-green-900/40' 
-                          : 'text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
-                      }`}
+                      className={`p-1.5 rounded transition-colors ${version.enabled
+                        ? 'text-green-600 hover:bg-green-100 dark:hover:bg-green-900/40'
+                        : 'text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                        }`}
                       title={version.enabled ? 'Disable version' : 'Enable version'}
                     >
                       {version.enabled ? (
@@ -335,7 +390,7 @@ export default function ModuleDetailPage() {
 
           <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              <strong>Tip:</strong> Only enabled versions are visible to Terraform. 
+              <strong>Tip:</strong> Only enabled versions are visible to Terraform.
               Sync tags to fetch new releases from your Git repository.
             </p>
           </div>
@@ -344,11 +399,33 @@ export default function ModuleDetailPage() {
 
       {/* Documentation */}
       <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-6">
-        <div className="flex items-center mb-4">
-          <FileText className="h-5 w-5 text-indigo-500 mr-2" />
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Documentation</h2>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center">
+            <FileText className="h-5 w-5 text-indigo-500 mr-2" />
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Documentation</h2>
+          </div>
+          {versions.length > 0 && (
+            <div className="flex items-center gap-2">
+              <label htmlFor="version-select" className="text-sm text-gray-600 dark:text-gray-400">
+                Version:
+              </label>
+              <select
+                id="version-select"
+                value={selectedVersion || ''}
+                onChange={(e) => setSelectedVersion(e.target.value || undefined)}
+                className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">Latest (main branch)</option>
+                {versions.map((version) => (
+                  <option key={version.id} value={version.version}>
+                    {version.version}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
-        
+
         {readmeLoading ? (
           <div className="flex justify-center py-8">
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-600"></div>
@@ -371,20 +448,20 @@ export default function ModuleDetailPage() {
             prose-hr:border-gray-200 dark:prose-hr:border-gray-700
             prose-img:rounded-lg prose-img:shadow-md
           ">
-            <ReactMarkdown 
+            <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
               components={{
                 code({ node, className, children, ...props }) {
                   const match = /language-(\w+)/.exec(className || '');
                   const isInline = !match && !className;
-                  
+
                   // Map terraform/tf to hcl for proper syntax highlighting
                   let language = match?.[1] || '';
                   if (language === 'tf' || language === 'terraform') {
                     language = 'hcl';
                   }
-                  
+
                   return !isInline && match ? (
                     <SyntaxHighlighter
                       style={theme === 'dark' ? oneDark : oneLight as { [key: string]: React.CSSProperties }}
@@ -426,7 +503,7 @@ export default function ModuleDetailPage() {
                 Delete Module
               </h3>
               <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-                Are you sure you want to delete <strong>{module.namespace}/{module.provider}/{module.name}</strong>? 
+                Are you sure you want to delete <strong>{module.namespace}/{module.provider}/{module.name}</strong>?
                 This will also delete all versions and cannot be undone.
               </p>
               <div className="flex justify-end space-x-3">

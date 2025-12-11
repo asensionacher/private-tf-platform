@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Puzzle, ChevronRight, Plus, X, GitBranch } from 'lucide-react';
@@ -20,6 +20,22 @@ export default function ProvidersPage() {
     queryKey: ['providers'],
     queryFn: () => providersApi.getAll(),
   });
+
+  const providers = Array.isArray(providersData) ? providersData : [];
+
+  // Check if there are any providers still syncing
+  const hasSyncingProviders = providers.some(p => !p.synced);
+
+  // Auto-refresh when there are syncing providers
+  useEffect(() => {
+    if (hasSyncingProviders) {
+      const interval = setInterval(() => {
+        queryClient.invalidateQueries({ queryKey: ['providers'] });
+      }, 3000); // Check every 3 seconds
+
+      return () => clearInterval(interval);
+    }
+  }, [hasSyncingProviders, queryClient]);
 
   const { data: namespacesData } = useQuery({
     queryKey: ['namespaces'],
@@ -43,7 +59,6 @@ export default function ProvidersPage() {
     },
   });
 
-  const providers = Array.isArray(providersData) ? providersData : [];
   const namespaces = Array.isArray(namespacesData) ? namespacesData : [];
 
   // Group providers by namespace
@@ -109,16 +124,34 @@ export default function ProvidersPage() {
                   {provs.map((prov) => (
                     <li
                       key={prov.id}
-                      className="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer transition-colors"
-                      onClick={() => navigate(`/providers/${prov.id}`)}
+                      className={`transition-colors ${prov.synced
+                        ? 'hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer'
+                        : 'opacity-50 cursor-not-allowed'
+                        }`}
+                      onClick={() => prov.synced && navigate(`/providers/${prov.id}`)}
                     >
                       <div className="px-4 py-4 sm:px-6 flex items-center justify-between">
                         <div className="flex items-center">
-                          <Puzzle className="h-8 w-8 text-purple-500" />
+                          <Puzzle className={`h-8 w-8 ${prov.synced ? 'text-purple-500' : 'text-gray-400'
+                            }`} />
                           <div className="ml-4">
-                            <p className="text-sm font-medium text-purple-600 dark:text-purple-400">
-                              {prov.namespace}/{prov.name}
-                            </p>
+                            <div className="flex items-center gap-2">
+                              <p className={`text-sm font-medium ${prov.synced
+                                ? 'text-purple-600 dark:text-purple-400'
+                                : 'text-gray-400 dark:text-gray-500'
+                                }`}>
+                                {prov.namespace}/{prov.name}
+                              </p>
+                              {!prov.synced && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400">
+                                  <svg className="animate-spin -ml-0.5 mr-1.5 h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                  </svg>
+                                  Syncing tags...
+                                </span>
+                              )}
+                            </div>
                             <p className="text-sm text-gray-500 dark:text-gray-400">
                               {prov.description || 'No description'}
                             </p>
@@ -130,7 +163,7 @@ export default function ProvidersPage() {
                             )}
                           </div>
                         </div>
-                        <ChevronRight className="h-5 w-5 text-gray-400" />
+                        {prov.synced && <ChevronRight className="h-5 w-5 text-gray-400" />}
                       </div>
                     </li>
                   ))}

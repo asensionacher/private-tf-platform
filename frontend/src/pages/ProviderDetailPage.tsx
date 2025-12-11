@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Puzzle, Tag, ExternalLink, Copy, RefreshCw, Check, Eye, EyeOff, Trash2, FileText, Upload } from 'lucide-react';
@@ -28,16 +28,28 @@ export default function ProviderDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { theme } = useTheme();
-  
+
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [selectedVersion, setSelectedVersion] = useState<string | undefined>(undefined);
 
   const { data: provider, isLoading: providerLoading } = useQuery({
     queryKey: ['provider', id],
     queryFn: () => providersApi.getById(id!),
     enabled: !!id,
   });
+
+  // Auto-refresh when provider is not synced yet
+  useEffect(() => {
+    if (provider && !provider.synced) {
+      const interval = setInterval(() => {
+        queryClient.invalidateQueries({ queryKey: ['provider', id] });
+      }, 3000); // Check every 3 seconds
+
+      return () => clearInterval(interval);
+    }
+  }, [provider, id, queryClient]);
 
   const { data: versionsData, isLoading: versionsLoading } = useQuery({
     queryKey: ['provider-versions', id],
@@ -46,8 +58,8 @@ export default function ProviderDetailPage() {
   });
 
   const { data: readmeData, isLoading: readmeLoading } = useQuery({
-    queryKey: ['provider-readme', id],
-    queryFn: () => providersApi.getReadme(id!),
+    queryKey: ['provider-readme', id, selectedVersion],
+    queryFn: () => providersApi.getReadme(id!, selectedVersion),
     enabled: !!id,
   });
 
@@ -69,7 +81,7 @@ export default function ProviderDetailPage() {
   });
 
   const toggleVersionMutation = useMutation({
-    mutationFn: ({ versionId, enabled }: { versionId: string; enabled: boolean }) => 
+    mutationFn: ({ versionId, enabled }: { versionId: string; enabled: boolean }) =>
       providersApi.toggleVersion(id!, versionId, enabled),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['provider-versions', id] });
@@ -206,6 +218,53 @@ export default function ProviderDetailPage() {
     );
   }
 
+  // Show syncing message if provider is not yet synced
+  if (!provider.synced) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <button
+              onClick={() => navigate('/providers')}
+              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
+            >
+              <ArrowLeft className="h-5 w-5 text-gray-600 dark:text-gray-400" />
+            </button>
+            <div className="flex items-center">
+              <Puzzle className="h-10 w-10 text-gray-400" />
+              <div className="ml-4">
+                <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+                  {provider.namespace}/{provider.name}
+                </h1>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  {provider.description || 'No description'}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-8 text-center">
+          <div className="flex justify-center mb-4">
+            <svg className="animate-spin h-12 w-12 text-yellow-600 dark:text-yellow-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          </div>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+            Synchronizing Tags
+          </h2>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+            Please wait while we synchronize the tags from the Git repository. This may take a few moments.
+          </p>
+          <p className="text-xs text-gray-500 dark:text-gray-500">
+            The provider will be available once the synchronization is complete.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   const providerSource = `${window.location.host}/${provider.namespace}/${provider.name}`;
 
   return (
@@ -263,7 +322,7 @@ export default function ProviderDetailPage() {
               )}
             </button>
             <pre className="text-sm text-gray-700 dark:text-gray-300">
-{`terraform {
+              {`terraform {
   required_providers {
     ${provider.name} = {
       source  = "${providerSource}"
@@ -336,15 +395,14 @@ export default function ProviderDetailPage() {
           </div>
 
           {syncMessage && (
-            <div className={`mb-4 p-3 rounded-lg text-sm ${
-              syncMessage.includes('Failed') 
-                ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
-                : 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
-            }`}>
+            <div className={`mb-4 p-3 rounded-lg text-sm ${syncMessage.includes('Failed')
+              ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
+              : 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
+              }`}>
               {syncMessage}
             </div>
           )}
-          
+
           {versionsLoading ? (
             <div className="flex justify-center py-8">
               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-purple-600"></div>
@@ -361,168 +419,164 @@ export default function ProviderDetailPage() {
             </div>
           ) : (
             <>
-            {/* Hidden file input */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".zip"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-            
-            <ul className="space-y-2 max-h-[32rem] overflow-y-auto">
-              {versions.map((version) => (
-                <li
-                  key={version.id}
-                  className={`rounded group transition-colors ${
-                    version.enabled 
-                      ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800' 
+              {/* Hidden file input */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".zip"
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+
+              <ul className="space-y-2 max-h-[32rem] overflow-y-auto">
+                {versions.map((version) => (
+                  <li
+                    key={version.id}
+                    className={`rounded group transition-colors ${version.enabled
+                      ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800'
                       : 'bg-gray-50 dark:bg-gray-900 border border-transparent'
-                  }`}
-                >
-                  <div className="py-2 px-3 flex items-center justify-between">
-                    <button
-                      onClick={() => setExpandedVersion(expandedVersion === version.id ? null : version.id)}
-                      className="flex items-center flex-1 text-left"
-                    >
-                      <Tag className={`h-4 w-4 mr-2 ${version.enabled ? 'text-green-500' : 'text-gray-400'}`} />
-                      <span className={`text-sm font-medium ${
-                        version.enabled 
-                          ? 'text-green-700 dark:text-green-300' 
-                          : 'text-gray-600 dark:text-gray-400'
-                      }`}>
-                        {version.version}
-                      </span>
-                      {version.enabled && (
-                        <span className="ml-2 text-xs text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/40 px-1.5 py-0.5 rounded">
-                          Published
-                        </span>
-                      )}
-                      {version.platforms && version.platforms.length > 0 && (
-                        <span className="ml-2 text-xs text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-900/40 px-1.5 py-0.5 rounded">
-                          {version.platforms.length} platform{version.platforms.length !== 1 ? 's' : ''}
-                        </span>
-                      )}
-                    </button>
-                    <div className="flex items-center gap-1">
+                      }`}
+                  >
+                    <div className="py-2 px-3 flex items-center justify-between">
                       <button
-                        onClick={() => toggleVersionMutation.mutate({ 
-                          versionId: version.id, 
-                          enabled: !version.enabled 
-                        })}
-                        className={`p-1.5 rounded transition-colors ${
-                          version.enabled 
-                            ? 'text-green-600 hover:bg-green-100 dark:hover:bg-green-900/40' 
-                            : 'text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
-                        }`}
-                        title={version.enabled ? 'Disable version' : 'Enable version'}
+                        onClick={() => setExpandedVersion(expandedVersion === version.id ? null : version.id)}
+                        className="flex items-center flex-1 text-left"
                       >
-                        {version.enabled ? (
-                          <Eye className="h-4 w-4" />
-                        ) : (
-                          <EyeOff className="h-4 w-4" />
+                        <Tag className={`h-4 w-4 mr-2 ${version.enabled ? 'text-green-500' : 'text-gray-400'}`} />
+                        <span className={`text-sm font-medium ${version.enabled
+                          ? 'text-green-700 dark:text-green-300'
+                          : 'text-gray-600 dark:text-gray-400'
+                          }`}>
+                          {version.version}
+                        </span>
+                        {version.enabled && (
+                          <span className="ml-2 text-xs text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/40 px-1.5 py-0.5 rounded">
+                            Published
+                          </span>
+                        )}
+                        {version.platforms && version.platforms.length > 0 && (
+                          <span className="ml-2 text-xs text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-900/40 px-1.5 py-0.5 rounded">
+                            {version.platforms.length} platform{version.platforms.length !== 1 ? 's' : ''}
+                          </span>
                         )}
                       </button>
-                      <button
-                        onClick={() => {
-                          if (confirm(`Delete version ${version.version}? This cannot be undone.`)) {
-                            deleteVersionMutation.mutate(version.id);
-                          }
-                        }}
-                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="Delete version"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                  
-                  {/* Expanded platforms section */}
-                  {expandedVersion === version.id && (
-                    <div className="px-3 pb-3 border-t border-gray-200 dark:border-gray-700 mt-2 pt-2">
-                      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">
-                        Platforms
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => toggleVersionMutation.mutate({
+                            versionId: version.id,
+                            enabled: !version.enabled
+                          })}
+                          className={`p-1.5 rounded transition-colors ${version.enabled
+                            ? 'text-green-600 hover:bg-green-100 dark:hover:bg-green-900/40'
+                            : 'text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                            }`}
+                          title={version.enabled ? 'Disable version' : 'Enable version'}
+                        >
+                          {version.enabled ? (
+                            <Eye className="h-4 w-4" />
+                          ) : (
+                            <EyeOff className="h-4 w-4" />
+                          )}
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (confirm(`Delete version ${version.version}? This cannot be undone.`)) {
+                              deleteVersionMutation.mutate(version.id);
+                            }
+                          }}
+                          className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Delete version"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
                       </div>
-                      <div className="space-y-1">
-                        {PLATFORMS.map((platform) => {
-                          const uploaded = version.platforms?.find(
-                            p => p.os === platform.os && p.arch === platform.arch
-                          );
-                          const isUploading = uploadingPlatform === `${platform.os}_${platform.arch}` && 
-                                             selectedUpload?.versionId === version.id;
-                          const isDeleting = uploaded && deletingPlatform === uploaded.id;
-                          
-                          return (
-                            <div 
-                              key={`${platform.os}_${platform.arch}`}
-                              className="flex items-center justify-between py-1 px-2 rounded bg-white dark:bg-gray-800 group"
-                            >
-                              <span className="text-xs text-gray-600 dark:text-gray-400">
-                                {platform.label}
-                              </span>
-                              {uploaded ? (
-                                <div className="inline-flex items-center gap-2">
-                                  <span className="inline-flex items-center text-xs text-green-600 dark:text-green-400">
-                                    <Check className="h-3 w-3 mr-1" />
-                                    Uploaded
-                                  </span>
+                    </div>
+
+                    {/* Expanded platforms section */}
+                    {expandedVersion === version.id && (
+                      <div className="px-3 pb-3 border-t border-gray-200 dark:border-gray-700 mt-2 pt-2">
+                        <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">
+                          Platforms
+                        </div>
+                        <div className="space-y-1">
+                          {PLATFORMS.map((platform) => {
+                            const uploaded = version.platforms?.find(
+                              p => p.os === platform.os && p.arch === platform.arch
+                            );
+                            const isUploading = uploadingPlatform === `${platform.os}_${platform.arch}` &&
+                              selectedUpload?.versionId === version.id;
+                            const isDeleting = uploaded && deletingPlatform === uploaded.id;
+
+                            return (
+                              <div
+                                key={`${platform.os}_${platform.arch}`}
+                                className="flex items-center justify-between py-1 px-2 rounded bg-white dark:bg-gray-800 group"
+                              >
+                                <span className="text-xs text-gray-600 dark:text-gray-400">
+                                  {platform.label}
+                                </span>
+                                {uploaded ? (
+                                  <div className="inline-flex items-center gap-2">
+                                    <span className="inline-flex items-center text-xs text-green-600 dark:text-green-400">
+                                      <Check className="h-3 w-3 mr-1" />
+                                      Uploaded
+                                    </span>
+                                    <button
+                                      onClick={() => {
+                                        if (confirm(`Delete ${platform.label} binary?`)) {
+                                          deletePlatformMutation.mutate({
+                                            versionId: version.id,
+                                            platformId: uploaded.id
+                                          });
+                                        }
+                                      }}
+                                      disabled={isDeleting}
+                                      className="p-0.5 text-gray-400 hover:text-red-500 rounded opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                                      title="Delete binary"
+                                    >
+                                      {isDeleting ? (
+                                        <RefreshCw className="h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <Trash2 className="h-3 w-3" />
+                                      )}
+                                    </button>
+                                  </div>
+                                ) : (
                                   <button
-                                    onClick={() => {
-                                      if (confirm(`Delete ${platform.label} binary?`)) {
-                                        deletePlatformMutation.mutate({ 
-                                          versionId: version.id, 
-                                          platformId: uploaded.id 
-                                        });
-                                      }
-                                    }}
-                                    disabled={isDeleting}
-                                    className="p-0.5 text-gray-400 hover:text-red-500 rounded opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
-                                    title="Delete binary"
+                                    onClick={() => triggerUpload(version.id, platform.os, platform.arch)}
+                                    disabled={isUploading}
+                                    className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded text-purple-600 hover:bg-purple-100 dark:text-purple-400 dark:hover:bg-purple-900/40 disabled:opacity-50"
                                   >
-                                    {isDeleting ? (
-                                      <RefreshCw className="h-3 w-3 animate-spin" />
+                                    {isUploading ? (
+                                      <>
+                                        <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                                        Uploading...
+                                      </>
                                     ) : (
-                                      <Trash2 className="h-3 w-3" />
+                                      <>
+                                        <Upload className="h-3 w-3 mr-1" />
+                                        Upload
+                                      </>
                                     )}
                                   </button>
-                                </div>
-                              ) : (
-                                <button
-                                  onClick={() => triggerUpload(version.id, platform.os, platform.arch)}
-                                  disabled={isUploading}
-                                  className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded text-purple-600 hover:bg-purple-100 dark:text-purple-400 dark:hover:bg-purple-900/40 disabled:opacity-50"
-                                >
-                                  {isUploading ? (
-                                    <>
-                                      <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
-                                      Uploading...
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Upload className="h-3 w-3 mr-1" />
-                                      Upload
-                                    </>
-                                  )}
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                      {uploadMessage?.versionId === version.id && (
-                        <div className={`mt-2 text-xs px-2 py-1 rounded ${
-                          uploadMessage.success 
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {uploadMessage?.versionId === version.id && (
+                          <div className={`mt-2 text-xs px-2 py-1 rounded ${uploadMessage.success
                             ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
                             : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
-                        }`}>
-                          {uploadMessage.message}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
+                            }`}>
+                            {uploadMessage.message}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
             </>
           )}
 
@@ -537,11 +591,35 @@ export default function ProviderDetailPage() {
 
       {/* Documentation */}
       <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-6">
-        <div className="flex items-center mb-4">
-          <FileText className="h-5 w-5 text-purple-500 mr-2" />
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Documentation</h2>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center">
+            <FileText className="h-5 w-5 text-purple-500 mr-2" />
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">README</h2>
+          </div>
+          <div className="flex items-center gap-3">
+            {versions.length > 0 && (
+              <>
+                <label htmlFor="version-select" className="text-sm text-gray-600 dark:text-gray-400">
+                  Version:
+                </label>
+                <select
+                  id="version-select"
+                  value={selectedVersion || ''}
+                  onChange={(e) => setSelectedVersion(e.target.value || undefined)}
+                  className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="">Latest (main branch)</option>
+                  {versions.map((version) => (
+                    <option key={version.id} value={version.version}>
+                      {version.version}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+          </div>
         </div>
-        
+
         {readmeLoading ? (
           <div className="flex justify-center py-8">
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-purple-600"></div>
@@ -564,20 +642,20 @@ export default function ProviderDetailPage() {
             prose-hr:border-gray-200 dark:prose-hr:border-gray-700
             prose-img:rounded-lg prose-img:shadow-md
           ">
-            <ReactMarkdown 
+            <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
               components={{
                 code({ node, className, children, ...props }) {
                   const match = /language-(\w+)/.exec(className || '');
                   const isInline = !match && !className;
-                  
+
                   // Map terraform/tf to hcl for proper syntax highlighting
                   let language = match?.[1] || '';
                   if (language === 'tf' || language === 'terraform') {
                     language = 'hcl';
                   }
-                  
+
                   return !isInline && match ? (
                     <SyntaxHighlighter
                       style={theme === 'dark' ? oneDark : oneLight as { [key: string]: React.CSSProperties }}
@@ -603,44 +681,46 @@ export default function ProviderDetailPage() {
           <div className="text-center py-8">
             <FileText className="mx-auto h-8 w-8 text-gray-400" />
             <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-              No documentation available. Add a README.md to your repository.
+              No README available. Sync tags to generate documentation.
             </p>
           </div>
         )}
       </div>
 
       {/* Delete Confirmation Modal */}
-      {showDeleteConfirm && (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
-          <div className="flex min-h-screen items-center justify-center p-4">
-            <div className="fixed inset-0 bg-black/50" onClick={() => setShowDeleteConfirm(false)} />
-            <div className="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full p-6">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-                Delete Provider
-              </h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-                Are you sure you want to delete <strong>{provider.namespace}/{provider.name}</strong>? 
-                This will also delete all versions and cannot be undone.
-              </p>
-              <div className="flex justify-end space-x-3">
-                <button
-                  onClick={() => setShowDeleteConfirm(false)}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => deleteProviderMutation.mutate()}
-                  disabled={deleteProviderMutation.isPending}
-                  className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md disabled:opacity-50"
-                >
-                  {deleteProviderMutation.isPending ? 'Deleting...' : 'Delete'}
-                </button>
+      {
+        showDeleteConfirm && (
+          <div className="fixed inset-0 z-50 overflow-y-auto">
+            <div className="flex min-h-screen items-center justify-center p-4">
+              <div className="fixed inset-0 bg-black/50" onClick={() => setShowDeleteConfirm(false)} />
+              <div className="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full p-6">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                  Delete Provider
+                </h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                  Are you sure you want to delete <strong>{provider.namespace}/{provider.name}</strong>?
+                  This will also delete all versions and cannot be undone.
+                </p>
+                <div className="flex justify-end space-x-3">
+                  <button
+                    onClick={() => setShowDeleteConfirm(false)}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => deleteProviderMutation.mutate()}
+                    disabled={deleteProviderMutation.isPending}
+                    className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md disabled:opacity-50"
+                  >
+                    {deleteProviderMutation.isPending ? 'Deleting...' : 'Delete'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )
+      }
+    </div >
   );
 }

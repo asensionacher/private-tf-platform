@@ -43,6 +43,8 @@ export interface Module {
   provider: string; // e.g., "aws", "azure", "gcp"
   description?: string;
   source_url?: string;
+  synced: boolean;
+  sync_error?: string;
   created_at: string;
   updated_at: string;
 }
@@ -101,6 +103,7 @@ export interface Provider {
   name: string;
   description?: string;
   source_url?: string;
+  synced: boolean;
   created_at: string;
   updated_at: string;
 }

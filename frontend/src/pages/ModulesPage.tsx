@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { Package, Box, ChevronRight, Plus, X, GitBranch } from 'lucide-react';
+import { Package, Box, ChevronRight, Plus, X, GitBranch, AlertCircle, RefreshCw, Trash2 } from 'lucide-react';
 import { modulesApi, namespacesApi } from '../api';
 import type { Module, ModuleFromGitCreate, Namespace } from '../types';
 
@@ -22,6 +22,22 @@ export default function ModulesPage() {
     queryKey: ['modules'],
     queryFn: () => modulesApi.getAll(),
   });
+
+  const modules = Array.isArray(modulesData) ? modulesData : [];
+
+  // Check if there are any modules still syncing
+  const hasSyncingModules = modules.some(m => !m.synced);
+
+  // Auto-refresh when there are syncing modules
+  useEffect(() => {
+    if (hasSyncingModules) {
+      const interval = setInterval(() => {
+        queryClient.invalidateQueries({ queryKey: ['modules'] });
+      }, 3000); // Check every 3 seconds
+
+      return () => clearInterval(interval);
+    }
+  }, [hasSyncingModules, queryClient]);
 
   const { data: namespacesData } = useQuery({
     queryKey: ['namespaces'],
@@ -47,7 +63,32 @@ export default function ModulesPage() {
     },
   });
 
-  const modules = Array.isArray(modulesData) ? modulesData : [];
+  const syncMutation = useMutation({
+    mutationFn: (moduleId: string) => modulesApi.syncTags(moduleId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['modules'] });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (moduleId: string) => modulesApi.delete(moduleId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['modules'] });
+    },
+  });
+
+  const handleRetrySync = (e: React.MouseEvent, moduleId: string) => {
+    e.stopPropagation();
+    syncMutation.mutate(moduleId);
+  };
+
+  const handleDelete = (e: React.MouseEvent, moduleId: string) => {
+    e.stopPropagation();
+    if (confirm('Are you sure you want to delete this module? This action cannot be undone.')) {
+      deleteMutation.mutate(moduleId);
+    }
+  };
+
   const namespaces = Array.isArray(namespacesData) ? namespacesData : [];
 
   // Group modules by namespace
@@ -113,28 +154,91 @@ export default function ModulesPage() {
                   {mods.map((mod) => (
                     <li
                       key={mod.id}
-                      className="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer transition-colors"
-                      onClick={() => navigate(`/modules/${mod.id}`)}
+                      className={`transition-colors ${mod.synced && !mod.sync_error
+                        ? 'hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer'
+                        : ''
+                        }`}
+                      onClick={() => (mod.synced && !mod.sync_error) && navigate(`/modules/${mod.id}`)}
                     >
-                      <div className="px-4 py-4 sm:px-6 flex items-center justify-between">
-                        <div className="flex items-center">
-                          <Box className="h-8 w-8 text-indigo-500" />
-                          <div className="ml-4">
-                            <p className="text-sm font-medium text-indigo-600 dark:text-indigo-400">
-                              {mod.namespace}/{mod.provider}/{mod.name}
-                            </p>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">
-                              {mod.description || 'No description'}
-                            </p>
-                            {mod.source_url && (
-                              <p className="text-xs text-gray-400 dark:text-gray-500 flex items-center mt-1">
-                                <GitBranch className="h-3 w-3 mr-1" />
-                                {mod.source_url}
+                      <div className="px-4 py-4 sm:px-6">
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-start flex-1">
+                            <Box className={`h-8 w-8 mt-0.5 ${mod.sync_error ? 'text-red-500' :
+                              mod.synced ? 'text-indigo-500' : 'text-gray-400'
+                              }`} />
+                            <div className="ml-4 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className={`text-sm font-medium ${mod.sync_error ? 'text-red-600 dark:text-red-400' :
+                                  mod.synced ? 'text-indigo-600 dark:text-indigo-400'
+                                    : 'text-gray-400 dark:text-gray-500'
+                                  }`}>
+                                  {mod.namespace}/{mod.name}/{mod.provider}
+                                </p>
+                                {!mod.synced && !mod.sync_error && (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400">
+                                    <svg className="animate-spin -ml-0.5 mr-1.5 h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    Syncing tags...
+                                  </span>
+                                )}
+                                {mod.sync_error && (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400">
+                                    <AlertCircle className="h-3 w-3 mr-1" />
+                                    Sync failed
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                                {mod.description || 'No description'}
                               </p>
-                            )}
+                              {mod.source_url && (
+                                <p className="text-xs text-gray-400 dark:text-gray-500 flex items-center mt-1">
+                                  <GitBranch className="h-3 w-3 mr-1" />
+                                  {mod.source_url}
+                                </p>
+                              )}
+                              {mod.sync_error && (
+                                <div className="mt-2 p-2 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded text-xs">
+                                  <p className="text-red-600 dark:text-red-400 font-medium mb-1">Error details:</p>
+                                  <p className="text-red-600 dark:text-red-400">{mod.sync_error}</p>
+                                  <div className="mt-2 flex gap-2">
+                                    <button
+                                      onClick={(e) => handleRetrySync(e, mod.id)}
+                                      disabled={syncMutation.isPending}
+                                      className="inline-flex items-center px-2 py-1 text-xs font-medium text-red-700 dark:text-red-300 bg-red-100 dark:bg-red-900/20 border border-red-300 dark:border-red-700 rounded hover:bg-red-200 dark:hover:bg-red-900/30 disabled:opacity-50"
+                                    >
+                                      <RefreshCw className={`h-3 w-3 mr-1 ${syncMutation.isPending ? 'animate-spin' : ''}`} />
+                                      {syncMutation.isPending ? 'Retrying...' : 'Retry Sync'}
+                                    </button>
+                                    <button
+                                      onClick={(e) => handleDelete(e, mod.id)}
+                                      disabled={deleteMutation.isPending}
+                                      className="inline-flex items-center px-2 py-1 text-xs font-medium text-red-700 dark:text-red-300 bg-red-100 dark:bg-red-900/20 border border-red-300 dark:border-red-700 rounded hover:bg-red-200 dark:hover:bg-red-900/30 disabled:opacity-50"
+                                    >
+                                      <Trash2 className="h-3 w-3 mr-1" />
+                                      {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                              {!mod.synced && !mod.sync_error && (
+                                <div className="mt-2">
+                                  <button
+                                    onClick={(e) => handleDelete(e, mod.id)}
+                                    disabled={deleteMutation.isPending}
+                                    className="inline-flex items-center px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50"
+                                  >
+                                    <Trash2 className="h-3 w-3 mr-1" />
+                                    {deleteMutation.isPending ? 'Deleting...' : 'Cancel & Delete'}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           </div>
+                          {mod.synced && !mod.sync_error && <ChevronRight className="h-5 w-5 text-gray-400" />}
                         </div>
-                        <ChevronRight className="h-5 w-5 text-gray-400" />
                       </div>
                     </li>
                   ))}

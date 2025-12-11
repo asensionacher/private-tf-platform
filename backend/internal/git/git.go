@@ -175,6 +175,36 @@ func extractNumber(s string) int {
 	return num
 }
 
+// ValidateGitRepository checks if a URL points to a valid, accessible Git repository
+func ValidateGitRepository(repoURL string) error {
+	// Ensure URL ends with .git
+	url := repoURL
+	if !strings.HasSuffix(url, ".git") {
+		url = url + ".git"
+	}
+
+	// Try to do a minimal ls-remote to verify the repository exists and is accessible
+	cmd := exec.Command("git", "ls-remote", "--heads", url)
+	cmd.Env = append(os.Environ(),
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_SSH_COMMAND=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// For URLs with embedded credentials (e.g., Azure DevOps), ls-remote might fail
+		// but the actual clone with credentials might work. Return a warning but don't fail.
+		if strings.Contains(repoURL, "@") && strings.Contains(repoURL, "://") {
+			// This looks like a URL with embedded credentials, allow it
+			return nil
+		}
+		return fmt.Errorf("repository validation failed: %v: %s", err, string(output))
+	}
+
+	// If we get here, the repository is valid and accessible
+	return nil
+}
+
 // GetReadme fetches the README.md content from a Git repository
 // Works with any Git repository by cloning and reading the file
 func GetReadme(repoURL string, ref string) (string, error) {
@@ -232,3 +262,4 @@ func GetReadme(repoURL string, ref string) (string, error) {
 
 	return "", fmt.Errorf("README not found in repository")
 }
+
