@@ -265,7 +265,8 @@ export default function ProviderDetailPage() {
     );
   }
 
-  const providerSource = `${window.location.host}/${provider.namespace}/${provider.name}`;
+  const host = window.location.hostname === 'localhost' ? `localhost.localdomain${window.location.port ? ':' + window.location.port : ''}` : window.location.host;
+  const providerSource = `${host}/${provider.namespace}/${provider.name}`;
 
   return (
     <div className="space-y-6">

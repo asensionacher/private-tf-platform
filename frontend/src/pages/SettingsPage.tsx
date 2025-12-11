@@ -45,12 +45,12 @@ export default function SettingsPage() {
           </h3>
         </div>
         <p className="text-xs text-blue-700 dark:text-blue-300 mb-2">
-          To use this registry with Terraform, you need to configure authentication. 
-          First, create a namespace and generate an API key from the Namespaces page, 
+          To use this registry with Terraform, you need to configure authentication.
+          First, create a namespace and generate an API key from the Namespaces page,
           then add this to your ~/.terraformrc:
         </p>
         <pre className="text-xs text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/40 p-3 rounded">
-{`credentials "${window.location.hostname}${window.location.port ? ':' + window.location.port : ''}" {
+          {`credentials "${window.location.hostname === 'localhost' ? 'localhost.localdomain' : window.location.hostname}${window.location.port ? ':' + window.location.port : ''}" {
   token = "YOUR_API_KEY"
 }`}
         </pre>
@@ -62,7 +62,7 @@ export default function SettingsPage() {
         </h3>
         <p className="text-xs text-amber-700 dark:text-amber-300">
           API keys are only required for Terraform CLI access to download modules and providers.
-          The web interface does not require authentication - you can create and manage 
+          The web interface does not require authentication - you can create and manage
           namespaces, modules, and providers directly from this UI.
         </p>
       </div>

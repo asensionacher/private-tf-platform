@@ -96,8 +96,8 @@ Create or edit `~/.terraformrc`:
 ```hcl
 host "localhost.localdomain:3000" {
   services = {
-    "modules.v1"   = "http://localhost:3000/v1/modules/",
-    "providers.v1" = "http://localhost:3000/v1/providers/"
+    "modules.v1"   = "http://localhost.localdomain:3000/v1/modules/",
+    "providers.v1" = "http://localhost.localdomain:3000/v1/providers/"
   }
 }
 ```

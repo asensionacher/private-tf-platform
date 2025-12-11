@@ -177,7 +177,8 @@ export default function ModuleDetailPage() {
     );
   }
 
-  const moduleSource = `${window.location.host}/${module.namespace}/${module.name}/${module.provider}`;
+  const host = window.location.hostname === 'localhost' ? `localhost.localdomain${window.location.port ? ':' + window.location.port : ''}` : window.location.host;
+  const moduleSource = `${host}/${module.namespace}/${module.name}/${module.provider}`;
 
   return (
     <div className="space-y-6">
