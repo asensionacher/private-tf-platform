@@ -207,3 +207,33 @@ func GetFileContent(repoURL string, ref string, filePath string, auth *AuthConfi
 
 	return string(content), nil
 }
+
+// Clone clones a git repository to a specific directory
+func Clone(repoURL, ref, destDir string, auth *AuthConfig) error {
+	// Ensure URL format
+	url := repoURL
+	if !strings.HasSuffix(url, ".git") && !strings.Contains(url, "dev.azure.com") && !strings.Contains(url, "/_git/") {
+		url = url + ".git"
+	}
+
+	// Inject HTTPS credentials if provided
+	if auth != nil && auth.Username != "" {
+		url = injectHTTPSCredentials(url, auth.Username, auth.Password)
+	}
+
+	// Prepare environment
+	env := os.Environ()
+	env = append(env, "GIT_TERMINAL_PROMPT=0")
+	env = append(env, "GIT_SSH_COMMAND=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null")
+
+	// Clone the repository
+	cmd := exec.Command("git", "clone", "--depth", "1", "--branch", ref, url, destDir)
+	cmd.Env = env
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git clone failed: %v: %s", err, string(output))
+	}
+
+	return nil
+}

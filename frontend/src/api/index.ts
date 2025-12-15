@@ -17,7 +17,9 @@ import type {
   Deployment,
   DeploymentCreate,
   GitReference,
-  DirectoryListing
+  DirectoryListing,
+  DeploymentRun,
+  DirectoryStatus
 } from '../types';
 
 const api = axios.create({
@@ -139,6 +141,20 @@ export const deploymentsApi = {
   getDirectory: (id: string, ref: string, path?: string) => {
     const params = path ? { ref, path } : { ref };
     return api.get<DirectoryListing>(`/deployments/${id}/browse`, { params }).then(res => res.data);
+  },
+  createRun: (id: string, data: { path: string, ref: string, tool: 'terraform' | 'tofu', env_vars?: Record<string, string> }) =>
+    api.post<DeploymentRun>(`/deployments/${id}/runs`, { deployment_id: id, ...data }).then(res => res.data),
+  getRuns: (id: string, path?: string) => {
+    const params = path ? { path } : {};
+    return api.get<DeploymentRun[]>(`/deployments/${id}/runs`, { params }).then(res => res.data || []);
+  },
+  getRun: (id: string, runId: string) =>
+    api.get<DeploymentRun>(`/deployments/${id}/runs/${runId}`).then(res => res.data),
+  approveRun: (id: string, runId: string, data: { approved: boolean, approved_by?: string }) =>
+    api.post<DeploymentRun>(`/deployments/${id}/runs/${runId}/approve`, data).then(res => res.data),
+  getStatus: (id: string, path?: string) => {
+    const params = path ? { path } : {};
+    return api.get<DirectoryStatus>(`/deployments/${id}/status`, { params }).then(res => res.data);
   },
 };
 

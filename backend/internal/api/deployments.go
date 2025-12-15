@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"iac-tool/internal/build"
 	"iac-tool/internal/crypto"
 	"iac-tool/internal/database"
 	"iac-tool/internal/git"
@@ -259,4 +260,261 @@ func GetDeploymentDirectory(c *gin.Context) {
 		"files":  files,
 		"readme": readme,
 	})
+}
+
+// CreateDeploymentRun creates a new deployment run
+// POST /api/deployments/:id/runs
+func CreateDeploymentRun(c *gin.Context) {
+	id := c.Param("id")
+	var input models.DeploymentRunCreate
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	input.DeploymentID = id
+
+	// Validate tool
+	if input.Tool != "terraform" && input.Tool != "tofu" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Tool must be 'terraform' or 'tofu'"})
+		return
+	}
+
+	// Verify deployment exists
+	var gitURL string
+	err := database.DB.QueryRow("SELECT git_url FROM deployments WHERE id = ?", id).Scan(&gitURL)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+
+	runID := generateID()
+	now := time.Now()
+
+	// Serialize env vars to JSON
+	envVarsJSON, _ := json.Marshal(input.EnvVars)
+
+	_, err = database.DB.Exec(`
+		INSERT INTO deployment_runs (id, deployment_id, path, ref, tool, env_vars, status, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+	`, runID, input.DeploymentID, input.Path, input.Ref, input.Tool, string(envVarsJSON), now)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get the created run
+	run, err := getDeploymentRun(runID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Start the deployment asynchronously
+	go build.ExecuteDeploymentRun(runID, id, input.Path, input.Ref, input.Tool, input.EnvVars)
+
+	c.JSON(http.StatusCreated, run)
+}
+
+// ListDeploymentRuns lists all runs for a deployment
+// GET /api/deployments/:id/runs?path=/optional/path
+func ListDeploymentRuns(c *gin.Context) {
+	id := c.Param("id")
+	path := c.Query("path")
+
+	var query string
+	var args []interface{}
+
+	if path != "" {
+		query = `
+			SELECT id FROM deployment_runs
+			WHERE deployment_id = ? AND path = ?
+			ORDER BY created_at DESC
+		`
+		args = []interface{}{id, path}
+	} else {
+		query = `
+			SELECT id FROM deployment_runs
+			WHERE deployment_id = ?
+			ORDER BY created_at DESC
+		`
+		args = []interface{}{id}
+	}
+
+	rows, err := database.DB.Query(query, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	runs := make([]models.DeploymentRun, 0)
+	for rows.Next() {
+		var runID string
+		if err := rows.Scan(&runID); err != nil {
+			continue
+		}
+		run, err := getDeploymentRun(runID)
+		if err != nil {
+			continue
+		}
+		runs = append(runs, *run)
+	}
+
+	c.JSON(http.StatusOK, runs)
+}
+
+// GetDirectoryStatus gets the status of the last deployment run for a directory
+// GET /api/deployments/:id/status?path=/optional/path
+func GetDirectoryStatus(c *gin.Context) {
+	id := c.Param("id")
+	path := c.Query("path")
+
+	if path == "" {
+		path = ""
+	}
+
+	var status models.DirectoryStatus
+	status.Path = path
+	status.Status = "none"
+	status.StatusColor = "blue"
+
+	// Get last run for this path
+	var run models.DeploymentRun
+	err := database.DB.QueryRow(`
+		SELECT id, deployment_id, path, ref, status, error_message, created_at, started_at, completed_at
+		FROM deployment_runs
+		WHERE deployment_id = ? AND path = ?
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, id, path).Scan(&run.ID, &run.DeploymentID, &run.Path, &run.Ref, &run.Status, &run.ErrorMessage, &run.CreatedAt, &run.StartedAt, &run.CompletedAt)
+
+	if err == nil {
+		status.LastRun = &run
+		status.Status = run.Status
+
+		switch run.Status {
+		case "success":
+			status.StatusColor = "green"
+		case "running":
+			status.StatusColor = "yellow"
+		case "failed":
+			status.StatusColor = "red"
+		default:
+			status.StatusColor = "blue"
+		}
+	}
+
+	c.JSON(http.StatusOK, status)
+}
+
+// GetDeploymentRun gets a single deployment run by ID
+// GET /api/deployments/:id/runs/:runId
+func GetDeploymentRun(c *gin.Context) {
+	runID := c.Param("runId")
+
+	run, err := getDeploymentRun(runID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Run not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, run)
+}
+
+// ApproveDeploymentRun approves or rejects a deployment run
+// POST /api/deployments/:id/runs/:runId/approve
+func ApproveDeploymentRun(c *gin.Context) {
+	runID := c.Param("runId")
+	var input models.DeploymentRunApproval
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check that run is in awaiting_approval state
+	var status string
+	err := database.DB.QueryRow(`SELECT status FROM deployment_runs WHERE id = ?`, runID).Scan(&status)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Run not found"})
+		return
+	}
+
+	if status != "awaiting_approval" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Run is not awaiting approval"})
+		return
+	}
+
+	// Update approval status
+	approvedBy := input.ApprovedBy
+	if !input.Approved {
+		approvedBy = "REJECTED"
+	}
+
+	now := time.Now()
+	_, err = database.DB.Exec(`
+		UPDATE deployment_runs 
+		SET approved_by = ?, approved_at = ?
+		WHERE id = ?
+	`, approvedBy, now, runID)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	run, _ := getDeploymentRun(runID)
+	c.JSON(http.StatusOK, run)
+}
+
+// getDeploymentRun is a helper to fetch a deployment run with all fields
+func getDeploymentRun(runID string) (*models.DeploymentRun, error) {
+	var run models.DeploymentRun
+	var envVarsJSON, initLog, planLog, applyLog, workDir, approvedBy sql.NullString
+
+	err := database.DB.QueryRow(`
+		SELECT id, deployment_id, path, ref, tool, env_vars, status, 
+		       init_log, plan_log, apply_log, error_message, work_dir,
+		       approved_by, approved_at, created_at, started_at, completed_at
+		FROM deployment_runs
+		WHERE id = ?
+	`, runID).Scan(
+		&run.ID, &run.DeploymentID, &run.Path, &run.Ref, &run.Tool,
+		&envVarsJSON, &run.Status, &initLog, &planLog, &applyLog,
+		&run.ErrorMessage, &workDir, &approvedBy, &run.ApprovedAt,
+		&run.CreatedAt, &run.StartedAt, &run.CompletedAt,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse env vars
+	if envVarsJSON.Valid && envVarsJSON.String != "" {
+		json.Unmarshal([]byte(envVarsJSON.String), &run.EnvVars)
+	} else {
+		run.EnvVars = make(map[string]string)
+	}
+
+	// Set nullable strings
+	if initLog.Valid {
+		run.InitLog = initLog.String
+	}
+	if planLog.Valid {
+		run.PlanLog = planLog.String
+	}
+	if applyLog.Valid {
+		run.ApplyLog = applyLog.String
+	}
+	if workDir.Valid {
+		run.WorkDir = workDir.String
+	}
+	if approvedBy.Valid {
+		run.ApprovedBy = &approvedBy.String
+	}
+
+	return &run, nil
 }

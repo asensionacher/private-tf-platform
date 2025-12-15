@@ -198,6 +198,46 @@ export interface DirectoryListing {
   signing_keys?: string;
 }
 
+export interface DeploymentRun {
+  id: string;
+  deployment_id: string;
+  path: string;
+  ref: string;
+  tool: 'terraform' | 'tofu';
+  env_vars: Record<string, string>;
+  status: 'pending' | 'initializing' | 'planning' | 'awaiting_approval' | 'applying' | 'success' | 'failed' | 'cancelled';
+  init_log: string;
+  plan_log: string;
+  apply_log: string;
+  error_message?: string;
+  work_dir: string;
+  approved_by?: string;
+  approved_at?: string;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+export interface DeploymentRunCreate {
+  deployment_id: string;
+  path: string;
+  ref: string;
+  tool: 'terraform' | 'tofu';
+  env_vars?: Record<string, string>;
+}
+
+export interface DeploymentRunApproval {
+  approved: boolean;
+  approved_by?: string;
+}
+
+export interface DirectoryStatus {
+  path: string;
+  last_run?: DeploymentRun;
+  status: 'none' | 'success' | 'running' | 'failed' | 'initializing' | 'planning' | 'awaiting_approval' | 'applying' | 'cancelled';
+  status_color: 'blue' | 'green' | 'yellow' | 'red';
+}
+
 export interface ProviderPlatformCreate {
   os: string;
   arch: string;

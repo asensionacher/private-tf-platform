@@ -17,6 +17,7 @@ export default function ModulesPage() {
     subdir: '',
   });
   const [error, setError] = useState<string | null>(null);
+  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const { data: modulesData, isLoading } = useQuery({
     queryKey: ['modules'],
@@ -24,6 +25,12 @@ export default function ModulesPage() {
   });
 
   const modules = Array.isArray(modulesData) ? modulesData : [];
+
+  // Show notification with auto-dismiss
+  const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 4000);
+  };
 
   // Check if there are any modules still syncing
   const hasSyncingModules = modules.some(m => !m.synced);
@@ -65,8 +72,14 @@ export default function ModulesPage() {
 
   const syncMutation = useMutation({
     mutationFn: (moduleId: string) => modulesApi.syncTags(moduleId),
-    onSuccess: () => {
+    onSuccess: (_, moduleId) => {
       queryClient.invalidateQueries({ queryKey: ['modules'] });
+      const module = modules.find(m => m.id === moduleId);
+      showNotification(`Module "${module?.name || 'Unknown'}" sync started successfully`, 'success');
+    },
+    onError: (err: any, moduleId) => {
+      const module = modules.find(m => m.id === moduleId);
+      showNotification(`Failed to sync module "${module?.name || 'Unknown'}": ${err.response?.data?.error || err.message}`, 'error');
     },
   });
 
@@ -118,6 +131,37 @@ export default function ModulesPage() {
 
   return (
     <div className="space-y-6">
+      {/* Notification Toast */}
+      {notification && (
+        <div
+          className={`fixed top-4 right-4 z-50 px-6 py-4 rounded-lg shadow-lg border transition-all duration-300 ${notification.type === 'success'
+            ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-800 dark:text-green-200'
+            : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200'
+            }`}
+        >
+          <div className="flex items-center gap-3">
+            {notification.type === 'success' ? (
+              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+              </svg>
+            )}
+            <p className="font-medium">{notification.message}</p>
+            <button
+              onClick={() => setNotification(null)}
+              className="ml-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+            >
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Modules</h1>

@@ -136,6 +136,11 @@ func main() {
 		apiGroup.DELETE("/deployments/:id", api.DeleteDeployment)
 		apiGroup.GET("/deployments/:id/references", api.GetDeploymentReferences)
 		apiGroup.GET("/deployments/:id/browse", api.GetDeploymentDirectory)
+		apiGroup.POST("/deployments/:id/runs", api.CreateDeploymentRun)
+		apiGroup.GET("/deployments/:id/runs", api.ListDeploymentRuns)
+		apiGroup.GET("/deployments/:id/runs/:runId", api.GetDeploymentRun)
+		apiGroup.POST("/deployments/:id/runs/:runId/approve", api.ApproveDeploymentRun)
+		apiGroup.GET("/deployments/:id/status", api.GetDirectoryStatus)
 	}
 
 	log.Println("Terraform Private Registry starting on :9080")

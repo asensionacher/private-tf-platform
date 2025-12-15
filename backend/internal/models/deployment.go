@@ -53,3 +53,47 @@ type DirectoryListing struct {
 	Readme    *string    `json:"readme,omitempty"`
 	HasGitOps bool       `json:"has_gitops"` // If directory contains IaC files
 }
+
+// DeploymentRun represents an execution of a deployment
+type DeploymentRun struct {
+	ID           string            `json:"id"`
+	DeploymentID string            `json:"deployment_id"`
+	Path         string            `json:"path"`
+	Ref          string            `json:"ref"`
+	Tool         string            `json:"tool"`      // "tofu" or "terraform"
+	EnvVars      map[string]string `json:"env_vars"`  // Environment variables
+	Status       string            `json:"status"`    // "pending", "initializing", "planning", "awaiting_approval", "applying", "success", "failed", "cancelled"
+	InitLog      string            `json:"init_log"`  // Init command output
+	PlanLog      string            `json:"plan_log"`  // Plan command output
+	ApplyLog     string            `json:"apply_log"` // Apply command output
+	ErrorMessage *string           `json:"error_message,omitempty"`
+	WorkDir      string            `json:"work_dir"` // Temporary work directory
+	ApprovedBy   *string           `json:"approved_by,omitempty"`
+	ApprovedAt   *time.Time        `json:"approved_at,omitempty"`
+	CreatedAt    time.Time         `json:"created_at"`
+	StartedAt    *time.Time        `json:"started_at,omitempty"`
+	CompletedAt  *time.Time        `json:"completed_at,omitempty"`
+}
+
+// DeploymentRunCreate is used for creating a new deployment run
+type DeploymentRunCreate struct {
+	DeploymentID string            `json:"deployment_id" binding:"required"`
+	Path         string            `json:"path" binding:"required"`
+	Ref          string            `json:"ref" binding:"required"`
+	Tool         string            `json:"tool" binding:"required"` // "tofu" or "terraform"
+	EnvVars      map[string]string `json:"env_vars,omitempty"`      // Environment variables
+}
+
+// DeploymentRunApproval is used for approving/rejecting a plan
+type DeploymentRunApproval struct {
+	Approved   bool   `json:"approved" binding:"required"`
+	ApprovedBy string `json:"approved_by,omitempty"`
+}
+
+// DirectoryStatus represents the deployment status for a directory
+type DirectoryStatus struct {
+	Path        string         `json:"path"`
+	LastRun     *DeploymentRun `json:"last_run,omitempty"`
+	Status      string         `json:"status"`       // "none", "success", "running", "failed"
+	StatusColor string         `json:"status_color"` // "blue", "green", "yellow", "red"
+}

@@ -27,6 +27,15 @@ go.work.sum
 # env file
 .env
 
+# Database files (SQLite)
+*.db
+*.db-shm
+*.db-wal
+backend/data/
+
+# Package managers (using pnpm, ignore npm lock)
+package-lock.json
+
 # Editor/IDE
 .vscode/
 node_modules/
@@ -45,6 +54,8 @@ yarn-error.log*
 
 # No bundled stuff in git
 dist
+dist/
+frontend/dist/
 lib
 
 # No rollup stuff

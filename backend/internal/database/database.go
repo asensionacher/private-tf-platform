@@ -217,5 +217,40 @@ func runMigrations() error {
 		UNIQUE(namespace_id, name)
 	)`)
 
+	// Create deployment_runs table if not exists
+	DB.Exec(`CREATE TABLE IF NOT EXISTS deployment_runs (
+		id TEXT PRIMARY KEY,
+		deployment_id TEXT NOT NULL,
+		path TEXT NOT NULL,
+		ref TEXT NOT NULL,
+		tool TEXT NOT NULL DEFAULT 'terraform',
+		env_vars TEXT,
+		status TEXT NOT NULL CHECK(status IN ('pending', 'initializing', 'planning', 'awaiting_approval', 'applying', 'success', 'failed', 'cancelled')) DEFAULT 'pending',
+		init_log TEXT,
+		plan_log TEXT,
+		apply_log TEXT,
+		error_message TEXT,
+		work_dir TEXT,
+		approved_by TEXT,
+		approved_at DATETIME,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		started_at DATETIME,
+		completed_at DATETIME,
+		FOREIGN KEY (deployment_id) REFERENCES deployments(id) ON DELETE CASCADE
+	)`)
+
+	// Create index for faster queries
+	DB.Exec(`CREATE INDEX IF NOT EXISTS idx_deployment_runs_deployment_path ON deployment_runs(deployment_id, path, created_at DESC)`)
+
+	// Add new columns to deployment_runs if they don't exist
+	DB.Exec(`ALTER TABLE deployment_runs ADD COLUMN tool TEXT DEFAULT 'terraform'`)
+	DB.Exec(`ALTER TABLE deployment_runs ADD COLUMN env_vars TEXT`)
+	DB.Exec(`ALTER TABLE deployment_runs ADD COLUMN init_log TEXT`)
+	DB.Exec(`ALTER TABLE deployment_runs ADD COLUMN plan_log TEXT`)
+	DB.Exec(`ALTER TABLE deployment_runs ADD COLUMN apply_log TEXT`)
+	DB.Exec(`ALTER TABLE deployment_runs ADD COLUMN work_dir TEXT`)
+	DB.Exec(`ALTER TABLE deployment_runs ADD COLUMN approved_by TEXT`)
+	DB.Exec(`ALTER TABLE deployment_runs ADD COLUMN approved_at DATETIME`)
+
 	return nil
 }
