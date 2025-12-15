@@ -66,6 +66,7 @@ The backend API will be available at `http://localhost:9080`
 - `BASE_URL`: Base URL for the registry (default: http://localhost:9080)
 - `DB_PATH`: SQLite database path (default: /app/data/registry.db)
 - `GPG_HOME`: GPG home directory for signing keys (default: /app/data/gpg)
+- `ENCRYPTION_KEY`: **Required for production** - 32-byte encryption key for securing credentials (SSH keys, passwords, tokens)
 
 #### Frontend
 - `VITE_API_URL`: Backend API URL (default: http://localhost:9080)
@@ -83,7 +84,30 @@ services:
       - ./data:/app/data  # Persistent storage
     environment:
       - BASE_URL=https://registry.example.com  # Your domain
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}  # Set in .env file
 ```
+
+### Security Configuration
+
+**Important**: For production environments, you must set a secure encryption key:
+
+1. Generate a strong encryption key:
+```bash
+openssl rand -base64 32
+```
+
+2. Create a `.env` file in the project root:
+```bash
+cp .env.example .env
+# Edit .env and set ENCRYPTION_KEY to your generated key
+```
+
+3. Restart the containers:
+```bash
+docker compose down && docker compose up -d
+```
+
+The encryption key is used to protect sensitive authentication data (SSH private keys, HTTPS passwords/tokens) stored in the database using AES-256-GCM encryption.
 
 ## Usage
 

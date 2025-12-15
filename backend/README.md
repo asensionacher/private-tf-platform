@@ -32,6 +32,8 @@ backend/
 │   │   └── git.go             # Operaciones Git (clone, tags)
 │   ├── gpg/
 │   │   └── gpg.go             # Firma GPG de binarios
+│   ├── crypto/
+│   │   └── crypto.go          # Encriptación AES-256-GCM
 │   └── build/
 │       └── build.go           # Generación de archivos de descarga
 ├── Dockerfile
@@ -75,6 +77,37 @@ Similar para providers (`/api/providers/*`)
 | `DB_PATH` | Ruta de la base de datos SQLite | `./registry.db` |
 | `GPG_HOME` | Directorio GPG para firmas | `/app/data/gpg` |
 | `BUILD_DIR` | Directorio para binarios de providers | `/app/data/builds` |
+| `ENCRYPTION_KEY` | **Clave de encriptación AES-256** (32 bytes) | `default-32-byte-encryption-key!!` |
+
+### Seguridad: Clave de Encriptación
+
+**⚠️ IMPORTANTE PARA PRODUCCIÓN**: La variable `ENCRYPTION_KEY` se usa para encriptar datos sensibles:
+- Claves SSH privadas para repositorios Git privados
+- Contraseñas y tokens HTTPS para autenticación Git
+- Cualquier credencial almacenada en la base de datos
+
+**Configuración recomendada**:
+
+1. Generar una clave segura:
+```bash
+openssl rand -base64 32
+```
+
+2. Configurar como variable de entorno:
+```bash
+export ENCRYPTION_KEY="tu-clave-generada-aqui"
+```
+
+3. O en Docker Compose (archivo `.env`):
+```env
+ENCRYPTION_KEY=tu-clave-generada-aqui
+```
+
+**Notas de seguridad**:
+- La clave por defecto es **solo para desarrollo/testing**
+- En producción, **siempre** usa una clave única y fuerte
+- Si cambias la clave, los datos encriptados existentes no podrán descifrarse
+- Guarda la clave de forma segura (gestores de secretos, vaults, etc.)
 
 ## Desarrollo Local
 

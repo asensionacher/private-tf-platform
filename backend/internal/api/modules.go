@@ -2,12 +2,14 @@ package api
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
+	"iac-tool/internal/crypto"
 	"iac-tool/internal/database"
 	"iac-tool/internal/git"
 	"iac-tool/internal/models"
@@ -505,6 +507,9 @@ func CreateModuleFromGit(c *gin.Context) {
 		GitURL      string  `json:"git_url" binding:"required"`
 		Description *string `json:"description,omitempty"`
 		Subdir      *string `json:"subdir,omitempty"` // Subdirectory in repo containing the module
+		IsPrivate   bool    `json:"is_private,omitempty"`
+		GitUsername string  `json:"git_username,omitempty"` // For HTTPS authentication
+		GitPassword string  `json:"git_password,omitempty"` // Personal Access Token
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -518,10 +523,37 @@ func CreateModuleFromGit(c *gin.Context) {
 		return
 	}
 
-	// Verify the repository exists and is accessible
-	if err := git.ValidateGitRepository(input.GitURL); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Git repository validation failed: " + err.Error()})
-		return
+	// Prepare auth config if repository is private (HTTPS only)
+	var authConfig *git.AuthConfig
+	var authData string
+	if input.IsPrivate && input.GitUsername != "" {
+		authConfig = &git.AuthConfig{
+			Type:     "https",
+			Username: input.GitUsername,
+			Password: input.GitPassword,
+		}
+		// Store auth data as encrypted JSON
+		authJSON := map[string]string{
+			"username": input.GitUsername,
+			"password": input.GitPassword,
+		}
+		authDataBytes, _ := json.Marshal(authJSON)
+
+		// Encrypt the auth data before storing
+		encrypted, err := crypto.EncryptJSON(string(authDataBytes))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encrypt authentication data: " + err.Error()})
+			return
+		}
+		authData = encrypted
+	}
+
+	// Verify the repository exists and is accessible (skip validation for now if private with auth)
+	if !input.IsPrivate {
+		if err := git.ValidateGitRepository(input.GitURL); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Git repository validation failed: " + err.Error()})
+			return
+		}
 	}
 
 	// Verify namespace exists
@@ -554,9 +586,9 @@ func CreateModuleFromGit(c *gin.Context) {
 	}
 
 	_, err = database.DB.Exec(`
-		INSERT INTO modules (id, namespace_id, name, provider, description, source_url, synced, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, FALSE, ?, ?)
-	`, moduleID, input.NamespaceID, input.Name, input.Provider, input.Description, sourceURL, now, now)
+		INSERT INTO modules (id, namespace_id, name, provider, description, source_url, synced, git_auth_type, git_auth_data, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, FALSE, ?, ?, ?, ?)
+	`, moduleID, input.NamespaceID, input.Name, input.Provider, input.Description, sourceURL, sql.NullString{String: "https", Valid: input.IsPrivate && input.GitUsername != ""}, authData, now, now)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -565,7 +597,7 @@ func CreateModuleFromGit(c *gin.Context) {
 
 	// Automatically sync tags in background
 	go func() {
-		syncModuleTagsBackground(moduleID, input.GitURL, input.Subdir)
+		syncModuleTagsBackgroundWithAuth(moduleID, input.GitURL, input.Subdir, authConfig)
 	}()
 
 	response := models.ModuleWithNamespace{
@@ -601,8 +633,32 @@ func SyncModuleTags(c *gin.Context) {
 	// Parse source URL to get git URL
 	gitURL, subdir := parseSourceURL(sourceURL)
 
-	// Fetch tags from Git
-	tags, err := git.GetTags(gitURL)
+	// Load auth config from database
+	var auth *git.AuthConfig
+	var authType sql.NullString
+	var authData sql.NullString
+	err = database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM modules WHERE id = ?", moduleID).Scan(&authType, &authData)
+	if err == nil && authType.Valid && authData.Valid {
+		// Decrypt auth data
+		decryptedData, err := crypto.DecryptJSON(authData.String)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to decrypt authentication data"})
+			return
+		}
+
+		// Parse auth data
+		var authJSON map[string]string
+		if err := json.Unmarshal([]byte(decryptedData), &authJSON); err == nil {
+			auth = &git.AuthConfig{
+				Type:       authType.String,
+				Username:   authJSON["username"],
+				Password:   authJSON["password"],
+			}
+		}
+	}
+
+	// Fetch tags from Git with authentication
+	tags, err := git.GetTagsWithAuth(gitURL, auth)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch tags: " + err.Error()})
 		return
@@ -648,8 +704,13 @@ func SyncModuleTags(c *gin.Context) {
 	})
 }
 
-// syncModuleTagsBackground syncs tags in the background
+// syncModuleTagsBackground syncs tags in the background (wrapper for backward compatibility)
 func syncModuleTagsBackground(moduleID string, gitURL string, subdir *string) {
+	syncModuleTagsBackgroundWithAuth(moduleID, gitURL, subdir, nil)
+}
+
+// syncModuleTagsBackgroundWithAuth syncs tags in the background with authentication
+func syncModuleTagsBackgroundWithAuth(moduleID string, gitURL string, subdir *string, auth *git.AuthConfig) {
 	log.Printf("Starting background tag sync for module %s", moduleID)
 
 	// Defer recovery to handle panics
@@ -662,7 +723,35 @@ func syncModuleTagsBackground(moduleID string, gitURL string, subdir *string) {
 		}
 	}()
 
-	tags, err := git.GetTags(gitURL)
+	// Load auth config from database if not provided
+	if auth == nil {
+		var authType sql.NullString
+		var authData sql.NullString
+		err := database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM modules WHERE id = ?", moduleID).Scan(&authType, &authData)
+		if err == nil && authType.Valid && authData.Valid {
+			// Decrypt auth data
+			decryptedData, err := crypto.DecryptJSON(authData.String)
+			if err != nil {
+				errorMsg := fmt.Sprintf("Failed to decrypt authentication data: %v", err)
+				log.Printf("Module %s decrypt error: %v", moduleID, err)
+				database.DB.Exec("UPDATE modules SET synced = TRUE, sync_error = ?, updated_at = ? WHERE id = ?",
+					errorMsg, time.Now(), moduleID)
+				return
+			}
+
+			// Parse auth data
+			var authJSON map[string]string
+			if err := json.Unmarshal([]byte(decryptedData), &authJSON); err == nil {
+				auth = &git.AuthConfig{
+					Type:       authType.String,
+					Username:   authJSON["username"],
+					Password:   authJSON["password"],
+				}
+			}
+		}
+	}
+
+	tags, err := git.GetTagsWithAuth(gitURL, auth)
 	if err != nil {
 		errorMsg := fmt.Sprintf("Failed to fetch tags: %v", err)
 		log.Printf("Failed to fetch tags for module %s: %v", moduleID, err)
@@ -793,8 +882,29 @@ func GetModuleReadme(c *gin.Context) {
 	// Parse source URL to get git URL
 	gitURL, _ := parseSourceURL(sourceURL)
 
-	// Fetch README
-	readme, err := git.GetReadme(gitURL, ref)
+	// Load auth config from database
+	var auth *git.AuthConfig
+	var authType sql.NullString
+	var authData sql.NullString
+	err = database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM modules WHERE id = ?", moduleID).Scan(&authType, &authData)
+	if err == nil && authType.Valid && authData.Valid {
+		// Decrypt auth data
+		decryptedData, err := crypto.DecryptJSON(authData.String)
+		if err == nil {
+			// Parse auth data
+			var authJSON map[string]string
+			if err := json.Unmarshal([]byte(decryptedData), &authJSON); err == nil {
+				auth = &git.AuthConfig{
+					Type:       authType.String,
+					Username:   authJSON["username"],
+					Password:   authJSON["password"],
+				}
+			}
+		}
+	}
+
+	// Fetch README with authentication
+	readme, err := git.GetReadmeWithAuth(gitURL, ref, auth)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "README not found: " + err.Error()})
 		return

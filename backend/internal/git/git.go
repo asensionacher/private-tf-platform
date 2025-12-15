@@ -2,13 +2,22 @@ package git
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 )
+
+// AuthConfig holds Git authentication configuration
+type AuthConfig struct {
+	Type     string // "https" only (SSH removed for security)
+	Username string // For HTTPS
+	Password string // For HTTPS (token or password)
+}
 
 // Tag represents a Git tag
 type Tag struct {
@@ -19,14 +28,19 @@ type Tag struct {
 
 // GetTags fetches all tags from a Git repository URL with their dates
 func GetTags(repoURL string) ([]Tag, error) {
-	// Ensure URL ends with .git
+	return GetTagsWithAuth(repoURL, nil)
+}
+
+// GetTagsWithAuth fetches all tags from a Git repository URL with authentication
+func GetTagsWithAuth(repoURL string, auth *AuthConfig) ([]Tag, error) {
+	// Ensure URL ends with .git (except for Azure DevOps which uses _git/ path)
 	url := repoURL
-	if !strings.HasSuffix(url, ".git") {
+	if !strings.HasSuffix(url, ".git") && !strings.Contains(url, "dev.azure.com") && !strings.Contains(url, "/_git/") {
 		url = url + ".git"
 	}
 
 	// Clone the repo and get all tags with their dates
-	tags, err := getTagsViaGitClone(url)
+	tags, err := getTagsViaGitClone(url, auth)
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +57,7 @@ func GetTags(repoURL string) ([]Tag, error) {
 }
 
 // getTagsViaGitClone clones the repository and gets all tags with their commit dates
-func getTagsViaGitClone(repoURL string) ([]Tag, error) {
+func getTagsViaGitClone(repoURL string, auth *AuthConfig) ([]Tag, error) {
 	// Create a temporary directory for the clone
 	tmpDir, err := os.MkdirTemp("", "git-tags-*")
 	if err != nil {
@@ -51,12 +65,19 @@ func getTagsViaGitClone(repoURL string) ([]Tag, error) {
 	}
 	defer os.RemoveAll(tmpDir)
 
+	// Prepare environment and credentials
+	env := os.Environ()
+	env = append(env, "GIT_TERMINAL_PROMPT=0")
+	env = append(env, "GIT_SSH_COMMAND=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null")
+
+	// Inject HTTPS credentials if provided
+	if auth != nil && auth.Username != "" {
+		repoURL = injectHTTPSCredentials(repoURL, auth.Username, auth.Password)
+	}
+
 	// Do a bare clone with minimal data
 	cmd := exec.Command("git", "clone", "--bare", "--filter=blob:none", repoURL, tmpDir)
-	cmd.Env = append(os.Environ(),
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_SSH_COMMAND=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
-	)
+	cmd.Env = env
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -177,9 +198,9 @@ func extractNumber(s string) int {
 
 // ValidateGitRepository checks if a URL points to a valid, accessible Git repository
 func ValidateGitRepository(repoURL string) error {
-	// Ensure URL ends with .git
+	// Ensure URL ends with .git (except for Azure DevOps which uses _git/ path)
 	url := repoURL
-	if !strings.HasSuffix(url, ".git") {
+	if !strings.HasSuffix(url, ".git") && !strings.Contains(url, "dev.azure.com") && !strings.Contains(url, "/_git/") {
 		url = url + ".git"
 	}
 
@@ -208,6 +229,11 @@ func ValidateGitRepository(repoURL string) error {
 // GetReadme fetches the README.md content from a Git repository
 // Works with any Git repository by cloning and reading the file
 func GetReadme(repoURL string, ref string) (string, error) {
+	return GetReadmeWithAuth(repoURL, ref, nil)
+}
+
+// GetReadmeWithAuth fetches the README.md content from a Git repository with authentication
+func GetReadmeWithAuth(repoURL string, ref string, auth *AuthConfig) (string, error) {
 	// Create a temporary directory for the clone
 	tmpDir, err := os.MkdirTemp("", "git-readme-*")
 	if err != nil {
@@ -215,9 +241,9 @@ func GetReadme(repoURL string, ref string) (string, error) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Ensure URL ends with .git
+	// Ensure URL ends with .git (except for Azure DevOps which uses _git/ path)
 	url := repoURL
-	if !strings.HasSuffix(url, ".git") {
+	if !strings.HasSuffix(url, ".git") && !strings.Contains(url, "dev.azure.com") && !strings.Contains(url, "/_git/") {
 		url = url + ".git"
 	}
 
@@ -226,22 +252,26 @@ func GetReadme(repoURL string, ref string) (string, error) {
 		ref = "HEAD"
 	}
 
+	// Prepare environment and credentials
+	env := os.Environ()
+	env = append(env, "GIT_TERMINAL_PROMPT=0")
+	env = append(env, "GIT_SSH_COMMAND=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null")
+
+	// Inject HTTPS credentials if provided
+	if auth != nil && auth.Username != "" {
+		url = injectHTTPSCredentials(url, auth.Username, auth.Password)
+	}
+
 	// Do a shallow clone with depth 1 for the specific ref
 	cmd := exec.Command("git", "clone", "--depth", "1", "--branch", ref, url, tmpDir)
-	cmd.Env = append(os.Environ(),
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_SSH_COMMAND=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
-	)
+	cmd.Env = env
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// If branch doesn't exist, try without --branch flag (uses default branch)
 		if ref == "HEAD" || strings.Contains(string(output), "Remote branch") {
 			cmd = exec.Command("git", "clone", "--depth", "1", url, tmpDir)
-			cmd.Env = append(os.Environ(),
-				"GIT_TERMINAL_PROMPT=0",
-				"GIT_SSH_COMMAND=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
-			)
+			cmd.Env = env
 			output, err = cmd.CombinedOutput()
 			if err != nil {
 				return "", fmt.Errorf("git clone failed: %v: %s", err, string(output))
@@ -261,5 +291,48 @@ func GetReadme(repoURL string, ref string) (string, error) {
 	}
 
 	return "", fmt.Errorf("README not found in repository")
+}
+
+// setupSSHKey creates a temporary SSH key file and returns the directory path and cleanup function
+func setupSSHKey(privateKey string) (string, func(), error) {
+	// Create temporary directory for SSH key
+	sshDir, err := os.MkdirTemp("", "git-ssh-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create SSH dir: %w", err)
+	}
+
+	cleanup := func() {
+		os.RemoveAll(sshDir)
+	}
+
+	// Write private key to file
+	keyPath := filepath.Join(sshDir, "id_rsa")
+	err = os.WriteFile(keyPath, []byte(privateKey), 0600)
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("failed to write SSH key: %w", err)
+	}
+
+	return sshDir, cleanup, nil
+}
+
+// injectHTTPSCredentials injects username and password into an HTTPS URL
+func injectHTTPSCredentials(repoURL, username, password string) string {
+	// Parse the URL
+	parsedURL, err := url.Parse(repoURL)
+	if err != nil {
+		// If parsing fails, fall back to original URL
+		return repoURL
+	}
+
+	// Only process HTTPS URLs
+	if parsedURL.Scheme != "https" {
+		return repoURL
+	}
+
+	// Set the credentials using url.UserPassword which handles proper encoding
+	parsedURL.User = url.UserPassword(username, password)
+
+	return parsedURL.String()
 }
 

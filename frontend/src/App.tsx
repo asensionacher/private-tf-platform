@@ -6,6 +6,8 @@ import ProvidersPage from './pages/ProvidersPage'
 import ProviderDetailPage from './pages/ProviderDetailPage'
 import NamespacesPage from './pages/NamespacesPage'
 import NamespaceDetailPage from './pages/NamespaceDetailPage'
+import DeploymentsPage from './pages/DeploymentsPage'
+import DeploymentDetailPage from './pages/DeploymentDetailPage'
 import SettingsPage from './pages/SettingsPage'
 
 function App() {
@@ -19,6 +21,8 @@ function App() {
         <Route path="/providers/:id" element={<ProviderDetailPage />} />
         <Route path="/namespaces" element={<NamespacesPage />} />
         <Route path="/namespaces/:id" element={<NamespaceDetailPage />} />
+        <Route path="/deployments" element={<DeploymentsPage />} />
+        <Route path="/deployments/:id" element={<DeploymentDetailPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Routes>
     </Layout>

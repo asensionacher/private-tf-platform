@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"iac-tool/internal/crypto"
 	"iac-tool/internal/database"
 	"iac-tool/internal/git"
 	"iac-tool/internal/gpg"
@@ -605,6 +607,9 @@ func CreateProviderFromGit(c *gin.Context) {
 		Name        string  `json:"name" binding:"required"`
 		GitURL      string  `json:"git_url" binding:"required"`
 		Description *string `json:"description,omitempty"`
+		IsPrivate   bool    `json:"is_private,omitempty"`
+		GitUsername string  `json:"git_username,omitempty"` // For HTTPS authentication
+		GitPassword string  `json:"git_password,omitempty"` // Personal Access Token
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -618,10 +623,37 @@ func CreateProviderFromGit(c *gin.Context) {
 		return
 	}
 
-	// Verify the repository exists and is accessible
-	if err := git.ValidateGitRepository(input.GitURL); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Git repository validation failed: " + err.Error()})
-		return
+	// Prepare auth config if repository is private (HTTPS only)
+	var authConfig *git.AuthConfig
+	var authData string
+	if input.IsPrivate && input.GitUsername != "" {
+		authConfig = &git.AuthConfig{
+			Type:     "https",
+			Username: input.GitUsername,
+			Password: input.GitPassword,
+		}
+		// Store auth data as encrypted JSON
+		authJSON := map[string]string{
+			"username": input.GitUsername,
+			"password": input.GitPassword,
+		}
+		authDataBytes, _ := json.Marshal(authJSON)
+
+		// Encrypt the auth data before storing
+		encrypted, err := crypto.EncryptJSON(string(authDataBytes))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encrypt authentication data: " + err.Error()})
+			return
+		}
+		authData = encrypted
+	}
+
+	// Verify the repository exists and is accessible (skip validation for private repos with auth)
+	if !input.IsPrivate {
+		if err := git.ValidateGitRepository(input.GitURL); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Git repository validation failed: " + err.Error()})
+			return
+		}
 	}
 
 	// Verify namespace exists
@@ -648,9 +680,9 @@ func CreateProviderFromGit(c *gin.Context) {
 	providerID := generateID()
 
 	_, err = database.DB.Exec(`
-		INSERT INTO providers (id, namespace_id, name, description, source_url, synced, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, FALSE, ?, ?)
-	`, providerID, input.NamespaceID, input.Name, input.Description, input.GitURL, now, now)
+		INSERT INTO providers (id, namespace_id, name, description, source_url, synced, git_auth_type, git_auth_data, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, FALSE, ?, ?, ?, ?)
+	`, providerID, input.NamespaceID, input.Name, input.Description, input.GitURL, sql.NullString{String: "https", Valid: input.IsPrivate && input.GitUsername != ""}, authData, now, now)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -659,7 +691,7 @@ func CreateProviderFromGit(c *gin.Context) {
 
 	// Automatically sync tags and generate documentation
 	go func() {
-		syncProviderTagsBackground(providerID, input.GitURL)
+		syncProviderTagsBackgroundWithAuth(providerID, input.GitURL, authConfig)
 	}()
 
 	response := models.ProviderWithNamespace{
@@ -823,13 +855,68 @@ func DeleteProviderVersionByID(c *gin.Context) {
 // ============================================================================
 
 // syncProviderTagsBackground syncs tags in the background
+// syncProviderTagsBackground syncs tags in the background (wrapper for backward compatibility)
 func syncProviderTagsBackground(providerID string, sourceURL string) {
+	syncProviderTagsBackgroundWithAuth(providerID, sourceURL, nil)
+}
+
+// syncProviderTagsBackgroundWithAuth syncs tags in the background with authentication
+func syncProviderTagsBackgroundWithAuth(providerID string, sourceURL string, auth *git.AuthConfig) {
 	log.Printf("Starting background tag sync for provider %s", providerID)
 
+	// Defer recovery to handle panics
+	defer func() {
+		if r := recover(); r != nil {
+			errorMsg := fmt.Sprintf("Panic during sync: %v", r)
+			log.Printf("Provider %s sync panic: %v", providerID, r)
+			database.DB.Exec("UPDATE providers SET synced = TRUE, sync_error = ?, updated_at = ? WHERE id = ?",
+				errorMsg, time.Now(), providerID)
+		}
+	}()
+
+	// Load auth config from database if not provided
+	if auth == nil {
+		var authType sql.NullString
+		var authData sql.NullString
+		err := database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM providers WHERE id = ?", providerID).Scan(&authType, &authData)
+		if err == nil && authType.Valid && authData.Valid {
+			// Decrypt auth data
+			decryptedData, err := crypto.DecryptJSON(authData.String)
+			if err != nil {
+				errorMsg := fmt.Sprintf("Failed to decrypt authentication data: %v", err)
+				log.Printf("Provider %s decrypt error: %v", providerID, err)
+				database.DB.Exec("UPDATE providers SET synced = TRUE, sync_error = ?, updated_at = ? WHERE id = ?",
+					errorMsg, time.Now(), providerID)
+				return
+			}
+
+			// Parse auth data
+			var authJSON map[string]string
+			if err := json.Unmarshal([]byte(decryptedData), &authJSON); err == nil {
+				auth = &git.AuthConfig{
+					Type:       authType.String,
+					Username:   authJSON["username"],
+					Password:   authJSON["password"],
+				}
+			}
+		}
+	}
+
 	// Fetch tags from Git
-	tags, err := git.GetTags(sourceURL)
+	tags, err := git.GetTagsWithAuth(sourceURL, auth)
 	if err != nil {
+		errorMsg := fmt.Sprintf("Failed to fetch tags: %v", err)
 		log.Printf("Failed to fetch tags for provider %s: %v", providerID, err)
+		database.DB.Exec("UPDATE providers SET synced = TRUE, sync_error = ?, updated_at = ? WHERE id = ?",
+			errorMsg, time.Now(), providerID)
+		return
+	}
+
+	if len(tags) == 0 {
+		errorMsg := "No valid version tags found in repository"
+		log.Printf("No tags found for provider %s", providerID)
+		database.DB.Exec("UPDATE providers SET synced = TRUE, sync_error = ?, updated_at = ? WHERE id = ?",
+			errorMsg, time.Now(), providerID)
 		return
 	}
 
@@ -863,8 +950,8 @@ func syncProviderTagsBackground(providerID string, sourceURL string) {
 		}
 	}
 
-	// Update provider updated_at and mark as synced
-	database.DB.Exec("UPDATE providers SET updated_at = ?, synced = TRUE WHERE id = ?", now, providerID)
+	// Update provider updated_at, mark as synced and clear errors
+	database.DB.Exec("UPDATE providers SET updated_at = ?, synced = TRUE, sync_error = NULL WHERE id = ?", now, providerID)
 
 	log.Printf("Background tag sync completed for provider %s: %d tags found, %d added", providerID, len(tags), addedCount)
 }
@@ -887,8 +974,32 @@ func SyncProviderTags(c *gin.Context) {
 		return
 	}
 
-	// Fetch tags from Git
-	tags, err := git.GetTags(*sourceURL)
+	// Load auth config from database
+	var auth *git.AuthConfig
+	var authType sql.NullString
+	var authData sql.NullString
+	err = database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM providers WHERE id = ?", providerID).Scan(&authType, &authData)
+	if err == nil && authType.Valid && authData.Valid {
+		// Decrypt auth data
+		decryptedData, err := crypto.DecryptJSON(authData.String)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to decrypt authentication data"})
+			return
+		}
+
+		// Parse auth data
+		var authJSON map[string]string
+		if err := json.Unmarshal([]byte(decryptedData), &authJSON); err == nil {
+			auth = &git.AuthConfig{
+				Type:       authType.String,
+				Username:   authJSON["username"],
+				Password:   authJSON["password"],
+			}
+		}
+	}
+
+	// Fetch tags from Git with authentication
+	tags, err := git.GetTagsWithAuth(*sourceURL, auth)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch tags: " + err.Error()})
 		return
@@ -981,8 +1092,29 @@ func GetProviderReadme(c *gin.Context) {
 		return
 	}
 
-	// Fetch README from Git
-	readme, err := git.GetReadme(*sourceURL, ref)
+	// Load auth config from database
+	var auth *git.AuthConfig
+	var authType sql.NullString
+	var authData sql.NullString
+	err = database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM providers WHERE id = ?", providerID).Scan(&authType, &authData)
+	if err == nil && authType.Valid && authData.Valid {
+		// Decrypt auth data
+		decryptedData, err := crypto.DecryptJSON(authData.String)
+		if err == nil {
+			// Parse auth data
+			var authJSON map[string]string
+			if err := json.Unmarshal([]byte(decryptedData), &authJSON); err == nil {
+				auth = &git.AuthConfig{
+					Type:       authType.String,
+					Username:   authJSON["username"],
+					Password:   authJSON["password"],
+				}
+			}
+		}
+	}
+
+	// Fetch README from Git with authentication
+	readme, err := git.GetReadmeWithAuth(*sourceURL, ref, auth)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "README not found: " + err.Error()})
 		return

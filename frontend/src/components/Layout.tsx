@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { Boxes, Package, FolderTree, Settings, Sun, Moon } from 'lucide-react';
+import { Boxes, Package, FolderTree, Settings, Sun, Moon, Rocket } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 
 interface LayoutProps {
@@ -8,10 +8,11 @@ interface LayoutProps {
 
 export default function Layout({ children }: LayoutProps) {
   const { isDark, toggleTheme } = useTheme();
-  
+
   const navItems = [
     { to: '/modules', label: 'Modules', icon: Boxes },
     { to: '/providers', label: 'Providers', icon: Package },
+    { to: '/deployments', label: 'Deployments', icon: Rocket },
     { to: '/namespaces', label: 'Namespaces', icon: FolderTree },
     { to: '/settings', label: 'Settings', icon: Settings },
   ];
@@ -39,10 +40,9 @@ export default function Layout({ children }: LayoutProps) {
               key={item.to}
               to={item.to}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-6 py-3 text-sm font-medium transition-colors ${
-                  isActive
-                    ? 'bg-gray-800 text-white border-l-4 border-blue-500'
-                    : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                `flex items-center gap-3 px-6 py-3 text-sm font-medium transition-colors ${isActive
+                  ? 'bg-gray-800 text-white border-l-4 border-blue-500'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-800'
                 }`
               }
             >

@@ -120,3 +120,5 @@ deployment_keys.tar
 
 .github/.release
 release-artifacts-*
+
+backend/iac-tool

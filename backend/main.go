@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"iac-tool/internal/api"
+	"iac-tool/internal/crypto"
 	"iac-tool/internal/database"
 	"iac-tool/internal/gpg"
 
@@ -13,6 +14,11 @@ import (
 )
 
 func main() {
+	// Initialize encryption
+	if err := crypto.Init(); err != nil {
+		log.Fatalf("Failed to initialize encryption: %v", err)
+	}
+
 	// Initialize database
 	if err := database.Init(); err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
@@ -122,6 +128,14 @@ func main() {
 		apiGroup.GET("/namespaces/:id/api-keys", api.GetAPIKeys)
 		apiGroup.POST("/namespaces/:id/api-keys", api.CreateAPIKey)
 		apiGroup.DELETE("/namespaces/:id/api-keys/:keyId", api.DeleteAPIKey)
+
+		// Deployments
+		apiGroup.GET("/deployments", api.ListDeployments)
+		apiGroup.GET("/deployments/:id", api.GetDeployment)
+		apiGroup.POST("/deployments", api.CreateDeployment)
+		apiGroup.DELETE("/deployments/:id", api.DeleteDeployment)
+		apiGroup.GET("/deployments/:id/references", api.GetDeploymentReferences)
+		apiGroup.GET("/deployments/:id/browse", api.GetDeploymentDirectory)
 	}
 
 	log.Println("Terraform Private Registry starting on :9080")

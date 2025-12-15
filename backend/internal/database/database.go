@@ -194,5 +194,28 @@ func runMigrations() error {
 	// Add sync_error column to providers if not exists
 	DB.Exec(`ALTER TABLE providers ADD COLUMN sync_error TEXT`)
 
+	// Add git authentication columns to modules
+	DB.Exec(`ALTER TABLE modules ADD COLUMN git_auth_type TEXT`)
+	DB.Exec(`ALTER TABLE modules ADD COLUMN git_auth_data TEXT`) // Encrypted JSON with credentials
+
+	// Add git authentication columns to providers
+	DB.Exec(`ALTER TABLE providers ADD COLUMN git_auth_type TEXT`)
+	DB.Exec(`ALTER TABLE providers ADD COLUMN git_auth_data TEXT`) // Encrypted JSON with credentials
+
+	// Create deployments table if not exists
+	DB.Exec(`CREATE TABLE IF NOT EXISTS deployments (
+		id TEXT PRIMARY KEY,
+		namespace_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		description TEXT,
+		git_url TEXT NOT NULL,
+		git_auth_type TEXT,
+		git_auth_data TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (namespace_id) REFERENCES namespaces(id) ON DELETE CASCADE,
+		UNIQUE(namespace_id, name)
+	)`)
+
 	return nil
 }

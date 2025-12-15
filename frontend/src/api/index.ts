@@ -13,7 +13,11 @@ import type {
   ProviderFromGitCreate,
   ProviderVersion,
   ProviderPlatform,
-  ProviderPlatformCreate
+  ProviderPlatformCreate,
+  Deployment,
+  DeploymentCreate,
+  GitReference,
+  DirectoryListing
 } from '../types';
 
 const api = axios.create({
@@ -104,6 +108,37 @@ export const providersApi = {
       formData,
       { headers: { 'Content-Type': 'multipart/form-data' } }
     ).then(res => res.data);
+  },
+};
+
+// Deployments API
+export const deploymentsApi = {
+  getAll: (namespace?: string) => {
+    const params = namespace ? { namespace } : {};
+    return api.get<Deployment[]>('/deployments', { params }).then(res => res.data || []);
+  },
+  getById: (id: string) => api.get<Deployment>(`/deployments/${id}`).then(res => res.data),
+  create: (data: DeploymentCreate) => api.post<Deployment>('/deployments', data).then(res => res.data),
+  delete: (id: string) => api.delete(`/deployments/${id}`).then(res => res.data),
+  getReferences: (id: string) =>
+    api.get<{ branches: string[], tags: string[] }>(`/deployments/${id}/references`).then(res => {
+      const references: GitReference[] = [];
+
+      // Convert branches
+      (res.data?.branches || []).forEach(name => {
+        references.push({ name, type: 'branch', sha: '' });
+      });
+
+      // Convert tags
+      (res.data?.tags || []).forEach(name => {
+        references.push({ name, type: 'tag', sha: '' });
+      });
+
+      return references;
+    }),
+  getDirectory: (id: string, ref: string, path?: string) => {
+    const params = path ? { ref, path } : { ref };
+    return api.get<DirectoryListing>(`/deployments/${id}/browse`, { params }).then(res => res.data);
   },
 };
 

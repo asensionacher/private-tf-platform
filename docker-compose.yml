@@ -9,6 +9,7 @@ services:
     environment:
       - GIN_MODE=release
       - DB_PATH=/app/data/registry.db
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-to-a-secure-32-char-key!}
     restart: unless-stopped
     networks:
       - registry-network

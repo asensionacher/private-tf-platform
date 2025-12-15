@@ -263,6 +263,53 @@ export default function ProvidersPage() {
                   />
                 </div>
 
+                <div>
+                  <label className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      checked={formData.is_private || false}
+                      onChange={(e) => setFormData({ ...formData, is_private: e.target.checked })}
+                      className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                    />
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Private Repository (requires HTTPS authentication)
+                    </span>
+                  </label>
+                </div>
+
+                {formData.is_private && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Username
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.git_username || ''}
+                        onChange={(e) => setFormData({ ...formData, git_username: e.target.value })}
+                        placeholder="your-username or token"
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-purple-500 focus:border-purple-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Password / Personal Access Token
+                      </label>
+                      <input
+                        type="password"
+                        value={formData.git_password || ''}
+                        onChange={(e) => setFormData({ ...formData, git_password: e.target.value })}
+                        placeholder="•••••••••••••"
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-purple-500 focus:border-purple-500"
+                        required={formData.is_private}
+                      />
+                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        For Azure DevOps/GitHub/GitLab, use a Personal Access Token
+                      </p>
+                    </div>
+                  </>
+                )}
+
                 <div className="flex justify-end gap-3 pt-4">
                   <button
                     type="button"

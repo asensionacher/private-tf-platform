@@ -146,7 +146,7 @@ export default function ModuleDetailPage() {
               <Box className="h-10 w-10 text-gray-400" />
               <div className="ml-4">
                 <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {module.namespace}/{module.provider}/{module.name}
+                  {module.namespace}/{module.name}/{module.provider}
                 </h1>
                 <p className="text-sm text-gray-500 dark:text-gray-400">
                   {module.description || 'No description'}
@@ -195,7 +195,7 @@ export default function ModuleDetailPage() {
             <Box className="h-10 w-10 text-indigo-500" />
             <div className="ml-4">
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-                {module.namespace}/{module.provider}/{module.name}
+                {module.namespace}/{module.name}/{module.provider}
               </h1>
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 {module.description || 'No description'}
@@ -504,7 +504,7 @@ export default function ModuleDetailPage() {
                 Delete Module
               </h3>
               <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-                Are you sure you want to delete <strong>{module.namespace}/{module.provider}/{module.name}</strong>?
+                Are you sure you want to delete <strong>{module.namespace}/{module.name}/{module.provider}</strong>?
                 This will also delete all versions and cannot be undone.
               </p>
               <div className="flex justify-end space-x-3">

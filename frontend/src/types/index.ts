@@ -64,6 +64,11 @@ export interface ModuleFromGitCreate {
   git_url: string;
   description?: string;
   subdir?: string;
+  is_private?: boolean;
+  git_auth_type?: 'ssh' | 'https';
+  git_username?: string;
+  git_password?: string;
+  git_ssh_key?: string;
 }
 
 // Add version to existing module
@@ -119,6 +124,11 @@ export interface ProviderFromGitCreate {
   name: string;
   git_url: string;
   description?: string;
+  is_private?: boolean;
+  git_auth_type?: 'ssh' | 'https';
+  git_username?: string;
+  git_password?: string;
+  git_ssh_key?: string;
 }
 
 export interface ProviderVersion {
@@ -138,6 +148,50 @@ export interface ProviderPlatform {
   arch: string;
   filename: string;
   download_url: string;
+}
+
+// Deployment for IaC management
+export interface Deployment {
+  id: string;
+  namespace_id: string;
+  namespace?: string;
+  name: string;
+  description?: string;
+  git_url: string;
+  is_private: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DeploymentCreate {
+  namespace_id: string;
+  name: string;
+  description?: string;
+  git_url: string;
+  is_private?: boolean;
+  git_username?: string;
+  git_password?: string;
+}
+
+export interface GitReference {
+  name: string;
+  type: 'branch' | 'tag';
+  sha: string;
+}
+
+export interface FileNode {
+  name: string;
+  path: string;
+  type: string;
+  size: number;
+  is_dir: boolean;
+}
+
+export interface DirectoryListing {
+  path: string;
+  files: FileNode[];
+  readme?: string;
+  has_gitops: boolean;
   shasums_url?: string;
   shasums_signature_url?: string;
   shasum: string;
