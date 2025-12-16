@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { deploymentsApi } from '../api';
 import { DeploymentRun } from '../types';
@@ -10,20 +10,83 @@ export default function DeploymentRunDetailPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [approving, setApproving] = useState(false);
+    const [cancelling, setCancelling] = useState(false);
+    const [streamingLogs, setStreamingLogs] = useState<string>('');
+    const eventSourceRef = useRef<EventSource | null>(null);
 
     useEffect(() => {
         loadRun();
+    }, [id, runId]);
 
-        // Auto-refresh every 3 seconds if run is active
+    // Auto-refresh polling when run is active
+    useEffect(() => {
+        const activeStatuses = ['pending', 'initializing', 'planning', 'awaiting_approval', 'applying'];
+        if (!run || !activeStatuses.includes(run.status)) {
+            return;
+        }
+
         const interval = setInterval(() => {
-            const activeStatuses = ['pending', 'initializing', 'planning', 'awaiting_approval', 'applying'];
-            if (run && activeStatuses.includes(run.status)) {
-                loadRun();
-            }
+            loadRun();
         }, 3000);
 
         return () => clearInterval(interval);
-    }, [id, runId]);
+    }, [run?.status, id, runId]);
+
+    // Connect to streaming logs when run is active or finished
+    useEffect(() => {
+        if (!run || !run.id) return;
+
+        // Connect for active runs to get live logs, and for finished runs to get buffered logs
+        const streamableStatuses = ['initializing', 'planning', 'awaiting_approval', 'applying', 'success', 'failed', 'cancelled'];
+        if (!streamableStatuses.includes(run.status)) {
+            // Close existing connection if status is not streamable
+            if (eventSourceRef.current) {
+                eventSourceRef.current.close();
+                eventSourceRef.current = null;
+            }
+            return;
+        }
+
+        // Close previous connection if exists
+        if (eventSourceRef.current) {
+            eventSourceRef.current.close();
+            eventSourceRef.current = null;
+        }
+
+        // Don't clear logs - keep accumulating for smooth transition
+        // Only clear on first connection (when streamingLogs is empty and status is initializing)
+        if (streamingLogs === '' && run.status === 'initializing') {
+            setStreamingLogs('');
+        }
+
+        // Connect to backend SSE proxy endpoint
+        const backendUrl = window.location.origin;
+        const streamUrl = `${backendUrl}/api/deployments/${id}/runs/${runId}/stream`;
+        console.log('Connecting to stream:', streamUrl, 'status:', run.status);
+
+        const eventSource = new EventSource(streamUrl);
+        eventSourceRef.current = eventSource;
+
+        eventSource.addEventListener('log', (event) => {
+            setStreamingLogs(prev => prev + event.data + '\n');
+        });
+
+        eventSource.onopen = () => {
+            console.log('Stream connection opened');
+        };
+
+        eventSource.onerror = (error) => {
+            console.error('Stream error:', error);
+            eventSource.close();
+            eventSourceRef.current = null;
+        };
+
+        return () => {
+            console.log('Closing stream connection');
+            eventSource.close();
+            eventSourceRef.current = null;
+        };
+    }, [run?.id, run?.status, id, runId]);
 
     const loadRun = async () => {
         if (!id || !runId) return;
@@ -43,17 +106,47 @@ export default function DeploymentRunDetailPage() {
     const handleApprove = async (approved: boolean) => {
         if (!id || !runId) return;
 
+        setApproving(true);
         try {
-            setApproving(true);
+            // Send approval/rejection to server
             await deploymentsApi.approveRun(id, runId, {
                 approved,
                 approved_by: 'User' // TODO: Get from auth context
             });
-            await loadRun();
+
+            // Update local state immediately for smooth transition
+            if (run) {
+                setRun({
+                    ...run,
+                    status: approved ? 'applying' : 'cancelled',
+                    approved_by: approved ? 'User' : 'REJECTED'
+                });
+            }
         } catch (err) {
+            console.error('Approval error:', err);
             setError(err instanceof Error ? err.message : 'Failed to approve run');
         } finally {
             setApproving(false);
+        }
+    };
+
+    const handleCancel = async () => {
+        if (!id || !runId) return;
+
+        if (!confirm('Are you sure you want to cancel this deployment? This action cannot be undone.')) {
+            return;
+        }
+
+        try {
+            setCancelling(true);
+            await deploymentsApi.cancelRun(id, runId);
+            await loadRun();
+        } catch (err: any) {
+            console.error('Cancel error:', err);
+            const errorMsg = err.response?.data?.error || err.message || 'Failed to cancel run';
+            setError(`Cancel failed: ${errorMsg}`);
+        } finally {
+            setCancelling(false);
         }
     };
 
@@ -96,6 +189,8 @@ export default function DeploymentRunDetailPage() {
 
     if (!run) return null;
 
+    const canCancel = ['pending', 'initializing', 'planning', 'awaiting_approval', 'applying'].includes(run.status);
+
     return (
         <div className="max-w-7xl mx-auto space-y-6">
             {/* Header */}
@@ -111,12 +206,26 @@ export default function DeploymentRunDetailPage() {
                         <span className="font-mono">{run.path || '/'}</span> @ <span className="font-mono">{run.ref}</span>
                     </p>
                 </div>
-                <Link
-                    to={`/deployments/${id}/runs`}
-                    className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
-                >
-                    Back to Runs
-                </Link>
+                <div className="flex gap-3">
+                    {canCancel && (
+                        <button
+                            onClick={handleCancel}
+                            disabled={cancelling}
+                            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                        >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                            {cancelling ? 'Cancelling...' : 'Stop Run'}
+                        </button>
+                    )}
+                    <Link
+                        to={`/deployments/${id}/runs`}
+                        className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+                    >
+                        Back to Runs
+                    </Link>
+                </div>
             </div>
 
             {/* Run Info */}
@@ -169,6 +278,16 @@ export default function DeploymentRunDetailPage() {
                 )}
             </div>
 
+            {/* Error Message */}
+            {run.error_message && (
+                <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+                    <h3 className="text-lg font-semibold text-red-900 dark:text-red-300 mb-2">Error</h3>
+                    <pre className="text-red-700 dark:text-red-400 whitespace-pre-wrap font-mono text-sm">
+                        {run.error_message}
+                    </pre>
+                </div>
+            )}
+
             {/* Approval Section */}
             {run.status === 'awaiting_approval' && (
                 <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg p-6">
@@ -203,18 +322,33 @@ export default function DeploymentRunDetailPage() {
                 </div>
             )}
 
-            {/* Error Message */}
-            {run.error_message && (
-                <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
-                    <h3 className="text-lg font-semibold text-red-900 dark:text-red-300 mb-2">Error</h3>
-                    <pre className="text-red-700 dark:text-red-400 whitespace-pre-wrap font-mono text-sm">
-                        {run.error_message}
-                    </pre>
+            {/* Live Streaming Logs (when running) */}
+            {streamingLogs && ['initializing', 'planning', 'awaiting_approval', 'applying'].includes(run.status) && (
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+                    <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b border-gray-200 dark:border-gray-600 flex items-center gap-2">
+                        <div className="animate-pulse w-2 h-2 bg-green-500 rounded-full"></div>
+                        <h3 className="font-semibold text-gray-900 dark:text-white">Live Output</h3>
+                    </div>
+                    <div className="p-4 overflow-x-auto max-h-[600px] overflow-y-auto">
+                        <AnsiOutput content={streamingLogs} />
+                    </div>
+                </div>
+            )}
+
+            {/* Completed Logs (when finished) */}
+            {streamingLogs && ['success', 'failed', 'cancelled'].includes(run.status) && (
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+                    <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b border-gray-200 dark:border-gray-600">
+                        <h3 className="font-semibold text-gray-900 dark:text-white">Execution Output</h3>
+                    </div>
+                    <div className="p-4 overflow-x-auto max-h-[600px] overflow-y-auto">
+                        <AnsiOutput content={streamingLogs} />
+                    </div>
                 </div>
             )}
 
             {/* Init Log */}
-            {run.init_log && (
+            {run.init_log && !['initializing'].includes(run.status) && (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
                     <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b border-gray-200 dark:border-gray-600">
                         <h3 className="font-semibold text-gray-900 dark:text-white">Init Output</h3>
@@ -226,7 +360,7 @@ export default function DeploymentRunDetailPage() {
             )}
 
             {/* Plan Log */}
-            {run.plan_log && (
+            {run.plan_log && !['planning'].includes(run.status) && (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
                     <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b border-gray-200 dark:border-gray-600">
                         <h3 className="font-semibold text-gray-900 dark:text-white">Plan Output</h3>
@@ -238,7 +372,7 @@ export default function DeploymentRunDetailPage() {
             )}
 
             {/* Apply Log */}
-            {run.apply_log && (
+            {run.apply_log && !['applying'].includes(run.status) && (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
                     <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b border-gray-200 dark:border-gray-600">
                         <h3 className="font-semibold text-gray-900 dark:text-white">Apply Output</h3>

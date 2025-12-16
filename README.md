@@ -17,21 +17,33 @@ This platform allows you to:
 ## Architecture
 
 ```
-┌─────────────┐      ┌──────────────┐      ┌─────────────┐
-│  Terraform  │─────▶│   Frontend   │─────▶│   Backend   │
-│     CLI     │      │ (React + TS) │      │  (Go + DB)  │
-└─────────────┘      └──────────────┘      └─────────────┘
-                            │                      │
-                            │                      ▼
-                            │              ┌──────────────┐
-                            └─────────────▶│ Git Repos    │
-                                           └──────────────┘
+┌─────────────┐      ┌──────────────┐      ┌─────────────┐      ┌─────────────┐
+│  Terraform  │─────▶│   Frontend   │─────▶│   Backend   │─────▶│   Runner    │
+│     CLI     │      │ (React + TS) │      │  (Go + DB)  │      │(TF/OpenTofu)│
+└─────────────┘      └──────────────┘      └─────────────┘      └─────────────┘
+                            │                      │                     │
+                            │                      ▼                     ▼
+                            │              ┌──────────────┐      ┌──────────────┐
+                            └─────────────▶│ Git Repos    │      │ Deployments  │
+                                           └──────────────┘      └──────────────┘
 ```
 
 - **Frontend**: React + TypeScript + Vite + Tailwind CSS
 - **Backend**: REST API in Go with SQLite database
+- **Runner**: Isolated executable that runs Terraform/OpenTofu commands
 - **Synchronization**: Automatic Git repo cloning to extract tags/versions
 - **GPG Signing**: Automatic generation and signing of provider binaries
+
+### Runner Architecture
+
+The platform uses a separated runner architecture for executing Terraform/OpenTofu deployments:
+
+- **Isolation**: The runner is a separate executable that handles all IaC tool execution
+- **Security**: Backend and runner communicate via stdin/stdout JSON protocol
+- **Flexibility**: Easy to scale runners independently or run them in separate containers
+- **Tool Support**: Supports both Terraform and OpenTofu seamlessly
+
+See [runner/README.md](runner/README.md) for more details on the runner component.
 
 ## Quick Start
 

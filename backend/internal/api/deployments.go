@@ -1,9 +1,13 @@
 package api
 
 import (
+	"bufio"
 	"database/sql"
 	"encoding/json"
+	"io"
+	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -98,7 +102,7 @@ func CreateDeployment(c *gin.Context) {
 			return
 		}
 
-		authType = sql.NullString{String: "https", Valid: true}
+		authType = sql.NullString{String: "http", Valid: true}
 		authData = sql.NullString{String: encrypted, Valid: true}
 	}
 
@@ -470,6 +474,71 @@ func ApproveDeploymentRun(c *gin.Context) {
 	c.JSON(http.StatusOK, run)
 }
 
+// CancelDeploymentRun cancels a running deployment
+// POST /api/deployments/:id/runs/:runId/cancel
+func CancelDeploymentRun(c *gin.Context) {
+	runID := c.Param("runId")
+
+	// Get the runner deployment ID
+	var workDir sql.NullString
+	var status string
+	err := database.DB.QueryRow(`SELECT work_dir, status FROM deployment_runs WHERE id = ?`, runID).Scan(&workDir, &status)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Run not found"})
+		return
+	}
+
+	// Check if run can be cancelled
+	cancellableStatuses := []string{"pending", "initializing", "planning", "awaiting_approval", "applying"}
+	canCancel := false
+	for _, s := range cancellableStatuses {
+		if status == s {
+			canCancel = true
+			break
+		}
+	}
+
+	if !canCancel {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Run cannot be cancelled in current state: " + status})
+		return
+	}
+
+	// Send cancel request to runner if it has started
+	if workDir.Valid && workDir.String != "" {
+		runnerURL := os.Getenv("RUNNER_URL")
+		if runnerURL == "" {
+			runnerURL = "http://runner:8080"
+		}
+
+		resp, err := http.Post(runnerURL+"/deploy/"+workDir.String+"/cancel", "application/json", nil)
+		if err == nil {
+			defer resp.Body.Close()
+		}
+	}
+
+	// Update database
+	now := time.Now()
+	result, err := database.DB.Exec(`
+		UPDATE deployment_runs 
+		SET status = 'cancelled', error_message = 'Cancelled by user', completed_at = ?
+		WHERE id = ?
+	`, now, runID)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update run status"})
+		return
+	}
+
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Run not updated - may already be completed"})
+		return
+	}
+
+	run, _ := getDeploymentRun(runID)
+	c.JSON(http.StatusOK, run)
+}
+
 // getDeploymentRun is a helper to fetch a deployment run with all fields
 func getDeploymentRun(runID string) (*models.DeploymentRun, error) {
 	var run models.DeploymentRun
@@ -517,4 +586,64 @@ func getDeploymentRun(runID string) (*models.DeploymentRun, error) {
 	}
 
 	return &run, nil
+}
+
+// StreamDeploymentRunLogs streams real-time logs from the runner
+// GET /api/deployments/:id/runs/:runId/stream
+func StreamDeploymentRunLogs(c *gin.Context) {
+	runID := c.Param("runId")
+
+	// Get the runner deployment ID (stored in work_dir)
+	var workDir sql.NullString
+	err := database.DB.QueryRow(`SELECT work_dir FROM deployment_runs WHERE id = ?`, runID).Scan(&workDir)
+	if err != nil || !workDir.Valid {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Run not found or not started"})
+		return
+	}
+
+	runnerDeploymentID := workDir.String
+
+	// Get runner URL
+	runnerURL := os.Getenv("RUNNER_URL")
+	if runnerURL == "" {
+		runnerURL = "http://runner:8080"
+	}
+
+	// Proxy the SSE stream from runner
+	resp, err := http.Get(runnerURL + "/deploy/" + runnerDeploymentID + "/logs")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to connect to runner"})
+		return
+	}
+	defer resp.Body.Close()
+
+	// Set SSE headers
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	// Get the response writer
+	w := c.Writer
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Streaming not supported"})
+		return
+	}
+
+	// Proxy the stream line by line
+	reader := bufio.NewReader(resp.Body)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			w.Write(line)
+			flusher.Flush()
+		}
+		if err != nil {
+			if err != io.EOF {
+				log.Printf("Stream error: %v", err)
+			}
+			break
+		}
+	}
 }

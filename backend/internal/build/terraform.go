@@ -1,67 +1,85 @@
 package build
 
 import (
-	"bufio"
-	"context"
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"iac-tool/internal/crypto"
 	"iac-tool/internal/database"
-	"iac-tool/internal/git"
+	"io"
+	"net/http"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"time"
-
-	"github.com/creack/pty"
 )
 
-// ExecuteDeploymentRun executes a deployment run with init, plan, and apply
+// RunnerDeploymentRequest matches the runner's DeploymentRequest
+type RunnerDeploymentRequest struct {
+	Tool        string            `json:"tool"`
+	GitURL      string            `json:"git_url"`
+	GitRef      string            `json:"git_ref"`
+	Path        string            `json:"path"`
+	EnvVars     map[string]string `json:"env_vars"`
+	Timeout     int               `json:"timeout"`
+	GitAuth     *RunnerGitAuth    `json:"git_auth,omitempty"`
+	AutoApprove bool              `json:"auto_approve"`
+}
+
+type RunnerGitAuth struct {
+	Type     string `json:"type"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+}
+
+type RunnerDeploymentResponse struct {
+	DeploymentID string `json:"deployment_id"`
+	Status       string `json:"status"`
+	Message      string `json:"message,omitempty"`
+}
+
+type RunnerDeploymentStatus struct {
+	DeploymentID string     `json:"deployment_id"`
+	Status       string     `json:"status"`
+	Phase        string     `json:"phase"`
+	StartedAt    time.Time  `json:"started_at"`
+	EndedAt      *time.Time `json:"ended_at,omitempty"`
+	Error        string     `json:"error,omitempty"`
+	InitLog      string     `json:"init_log,omitempty"`
+	PlanLog      string     `json:"plan_log,omitempty"`
+	ApplyLog     string     `json:"apply_log,omitempty"`
+}
+
+// ExecuteDeploymentRun executes a deployment run via the runner HTTP API
 func ExecuteDeploymentRun(runID, deploymentID, path, ref, tool string, envVars map[string]string) {
 	// Mark as initializing
 	now := time.Now()
 	database.DB.Exec(`
-		UPDATE deployment_runs
-		SET status = 'initializing', started_at = ?
-		WHERE id = ?
-	`, now, runID)
-
-	// Create temporary work directory
-	workDir := filepath.Join("/tmp", "iac-deployments", runID)
-	if err := os.MkdirAll(workDir, 0755); err != nil {
-		failRun(runID, "Failed to create work directory: "+err.Error())
-		return
-	}
-
-	// Store work directory
-	database.DB.Exec(`UPDATE deployment_runs SET work_dir = ? WHERE id = ?`, workDir, runID)
-
-	// Schedule cleanup
-	go scheduleCleanup(runID, workDir)
+UPDATE deployment_runs
+SET status = 'initializing', started_at = ?
+WHERE id = ?
+`, now, runID)
 
 	// Get deployment info
 	var gitURL string
 	var authType, authDataStr sql.NullString
 	err := database.DB.QueryRow(`
-		SELECT git_url, git_auth_type, git_auth_data 
-		FROM deployments 
-		WHERE id = ?
-	`, deploymentID).Scan(&gitURL, &authType, &authDataStr)
+SELECT git_url, git_auth_type, git_auth_data 
+FROM deployments 
+WHERE id = ?
+`, deploymentID).Scan(&gitURL, &authType, &authDataStr)
 	if err != nil {
 		failRun(runID, "Failed to get deployment info: "+err.Error())
 		return
 	}
 
-	// Prepare auth config
-	var auth *git.AuthConfig
+	// Prepare git auth
+	var gitAuth *RunnerGitAuth
 	if authType.Valid && authDataStr.Valid {
 		decryptedData, err := crypto.DecryptJSON(authDataStr.String)
 		if err == nil {
 			var authJSON map[string]string
 			if err := json.Unmarshal([]byte(decryptedData), &authJSON); err == nil {
-				auth = &git.AuthConfig{
+				gitAuth = &RunnerGitAuth{
 					Type:     authType.String,
 					Username: authJSON["username"],
 					Password: authJSON["password"],
@@ -70,123 +88,150 @@ func ExecuteDeploymentRun(runID, deploymentID, path, ref, tool string, envVars m
 		}
 	}
 
-	// Clone repository
-	if err := git.Clone(gitURL, ref, workDir, auth); err != nil {
-		failRun(runID, "Failed to clone repository: "+err.Error())
-		return
+	// Create deployment request
+	runnerReq := RunnerDeploymentRequest{
+		Tool:        tool,
+		GitURL:      gitURL,
+		GitRef:      ref,
+		Path:        path,
+		EnvVars:     envVars,
+		Timeout:     60,
+		GitAuth:     gitAuth,
+		AutoApprove: false, // Manual approval required
 	}
 
-	// Navigate to deployment path
-	deployPath := filepath.Join(workDir, path)
-	if _, err := os.Stat(deployPath); os.IsNotExist(err) {
-		failRun(runID, "Deployment path does not exist: "+path)
-		return
+	// Get runner URL from environment
+	runnerURL := os.Getenv("RUNNER_URL")
+	if runnerURL == "" {
+		runnerURL = "http://runner:8080"
 	}
 
-	// Execute init
-	initLog, err := executeCommand(tool, deployPath, []string{"init"}, envVars)
-	database.DB.Exec(`UPDATE deployment_runs SET init_log = ? WHERE id = ?`, initLog, runID)
+	// Start deployment on runner
+	reqBody, _ := json.Marshal(runnerReq)
+	resp, err := http.Post(runnerURL+"/deploy", "application/json", bytes.NewBuffer(reqBody))
 	if err != nil {
-		failRun(runID, "Init failed: "+err.Error())
+		failRun(runID, "Failed to contact runner: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 202 {
+		body, _ := io.ReadAll(resp.Body)
+		failRun(runID, fmt.Sprintf("Runner returned error: %s", string(body)))
 		return
 	}
 
-	// Execute plan
-	database.DB.Exec(`UPDATE deployment_runs SET status = 'planning' WHERE id = ?`, runID)
-	planLog, err := executeCommand(tool, deployPath, []string{"plan", "-out=tfplan"}, envVars)
-	database.DB.Exec(`UPDATE deployment_runs SET plan_log = ? WHERE id = ?`, planLog, runID)
-	if err != nil {
-		failRun(runID, "Plan failed: "+err.Error())
+	var deployResp RunnerDeploymentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&deployResp); err != nil {
+		failRun(runID, "Failed to parse runner response: "+err.Error())
 		return
 	}
 
-	// Wait for approval
-	database.DB.Exec(`UPDATE deployment_runs SET status = 'awaiting_approval' WHERE id = ?`, runID)
+	runnerDeploymentID := deployResp.DeploymentID
 
-	// Poll for approval (timeout after 24 hours)
-	approved := waitForApproval(runID, 24*time.Hour)
-	if !approved {
-		database.DB.Exec(`
+	// Store runner deployment ID
+	database.DB.Exec(`UPDATE deployment_runs SET work_dir = ? WHERE id = ?`, runnerDeploymentID, runID)
+
+	// Poll runner for status updates
+	pollRunnerStatus(runID, runnerDeploymentID, runnerURL)
+}
+
+func pollRunnerStatus(runID, runnerDeploymentID, runnerURL string) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	timeout := time.After(2 * time.Hour)
+	firstUpdate := true
+
+	for {
+		select {
+		case <-ticker.C:
+			// Get status from runner
+			resp, err := http.Get(fmt.Sprintf("%s/deploy/%s/status", runnerURL, runnerDeploymentID))
+			if err != nil {
+				continue
+			}
+
+			var status RunnerDeploymentStatus
+			if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+				resp.Body.Close()
+				continue
+			}
+			resp.Body.Close()
+
+			// Update started_at on first update
+			if firstUpdate && status.StartedAt.Unix() > 0 {
+				database.DB.Exec(`UPDATE deployment_runs SET started_at = ? WHERE id = ?`, status.StartedAt, runID)
+				firstUpdate = false
+			}
+
+			// Update database
+			database.DB.Exec(`
 			UPDATE deployment_runs 
-			SET status = 'cancelled', completed_at = ? 
+			SET status = ?, init_log = ?, plan_log = ?, apply_log = ?
 			WHERE id = ?
-		`, time.Now(), runID)
-		return
-	}
+		`, status.Phase, status.InitLog, status.PlanLog, status.ApplyLog, runID)
 
-	// Execute apply
-	database.DB.Exec(`UPDATE deployment_runs SET status = 'applying' WHERE id = ?`, runID)
-	applyLog, err := executeCommand(tool, deployPath, []string{"apply", "tfplan"}, envVars)
-	database.DB.Exec(`UPDATE deployment_runs SET apply_log = ? WHERE id = ?`, applyLog, runID)
-	if err != nil {
-		failRun(runID, "Apply failed: "+err.Error())
-		return
-	}
+			// Check if waiting for approval
+			if status.Status == "awaiting_approval" {
+				database.DB.Exec(`UPDATE deployment_runs SET status = 'awaiting_approval' WHERE id = ?`, runID)
 
-	// Mark as success
-	database.DB.Exec(`
-		UPDATE deployment_runs 
-		SET status = 'success', completed_at = ? 
-		WHERE id = ?
-	`, time.Now(), runID)
+				// Wait for approval in database
+				if !waitForApproval(runID, runnerDeploymentID, runnerURL, 24*time.Hour) {
+					// Rejected - continue polling to get the final status from runner
+					time.Sleep(1 * time.Second)
+					continue
+				}
+				// Approved - continue polling for apply phase
+				continue
+			}
+
+			// Check if deployment finished
+			if status.Status == "success" {
+				database.DB.Exec(`
+				UPDATE deployment_runs 
+				SET status = 'success', completed_at = ? 
+				WHERE id = ?
+			`, time.Now(), runID)
+				return
+			}
+
+			if status.Status == "failed" || status.Status == "cancelled" {
+				database.DB.Exec(`
+				UPDATE deployment_runs 
+				SET status = ?, error_message = ?, completed_at = ? 
+				WHERE id = ?
+			`, status.Status, status.Error, time.Now(), runID)
+				return
+			}
+
+		case <-timeout:
+			failRun(runID, "Deployment timeout")
+			return
+		}
+	}
 }
 
-// executeCommand runs a terraform/tofu command and returns the output with ANSI colors
-func executeCommand(tool, workDir string, args []string, envVars map[string]string) (string, error) {
-	cmdName := tool
-	if tool == "tofu" {
-		cmdName = "tofu"
-	} else {
-		cmdName = "terraform"
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, cmdName, args...)
-	cmd.Dir = workDir
-
-	// Set environment variables
-	cmd.Env = os.Environ()
-	for k, v := range envVars {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-	}
-
-	// Use pty to get colored output
-	ptmx, err := pty.Start(cmd)
-	if err != nil {
-		return "", err
-	}
-	defer ptmx.Close()
-
-	// Read all output
-	var output strings.Builder
-	scanner := bufio.NewScanner(ptmx)
-	for scanner.Scan() {
-		line := scanner.Text()
-		output.WriteString(line + "\n")
-	}
-
-	// Wait for command to finish
-	if err := cmd.Wait(); err != nil {
-		return output.String(), err
-	}
-
-	return output.String(), nil
-}
-
-// waitForApproval polls the database for approval
-func waitForApproval(runID string, timeout time.Duration) bool {
+func waitForApproval(runID, runnerDeploymentID, runnerURL string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 
 	for time.Now().Before(deadline) {
 		var approvedBy sql.NullString
 		err := database.DB.QueryRow(`
-			SELECT approved_by FROM deployment_runs WHERE id = ?
-		`, runID).Scan(&approvedBy)
+SELECT approved_by FROM deployment_runs WHERE id = ?
+`, runID).Scan(&approvedBy)
 
 		if err == nil && approvedBy.Valid {
-			return approvedBy.String != "REJECTED"
+			if approvedBy.String == "REJECTED" {
+				// Send rejection to runner (runner will update status to cancelled)
+				http.Post(fmt.Sprintf("%s/deploy/%s/reject", runnerURL, runnerDeploymentID), "application/json", nil)
+				return false
+			} else {
+				// Send approval to runner
+				http.Post(fmt.Sprintf("%s/deploy/%s/approve", runnerURL, runnerDeploymentID), "application/json", nil)
+				database.DB.Exec(`UPDATE deployment_runs SET status = 'applying' WHERE id = ?`, runID)
+				return true
+			}
 		}
 
 		time.Sleep(2 * time.Second)
@@ -195,25 +240,10 @@ func waitForApproval(runID string, timeout time.Duration) bool {
 	return false
 }
 
-// failRun marks a run as failed
 func failRun(runID, errorMsg string) {
 	database.DB.Exec(`
-		UPDATE deployment_runs 
-		SET status = 'failed', error_message = ?, completed_at = ? 
-		WHERE id = ?
-	`, errorMsg, time.Now(), runID)
-}
-
-// scheduleCleanup removes the work directory after 24 hours
-func scheduleCleanup(runID, workDir string) {
-	time.Sleep(24 * time.Hour)
-
-	// Check if run is still in progress
-	var status string
-	database.DB.QueryRow(`SELECT status FROM deployment_runs WHERE id = ?`, runID).Scan(&status)
-
-	// Only cleanup if completed or cancelled
-	if status == "success" || status == "failed" || status == "cancelled" {
-		os.RemoveAll(workDir)
-	}
+UPDATE deployment_runs 
+SET status = 'failed', error_message = ?, completed_at = ? 
+WHERE id = ?
+`, errorMsg, time.Now(), runID)
 }

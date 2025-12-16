@@ -86,7 +86,7 @@ type DeploymentRunCreate struct {
 
 // DeploymentRunApproval is used for approving/rejecting a plan
 type DeploymentRunApproval struct {
-	Approved   bool   `json:"approved" binding:"required"`
+	Approved   bool   `json:"approved"`
 	ApprovedBy string `json:"approved_by,omitempty"`
 }
 

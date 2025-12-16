@@ -139,7 +139,9 @@ func main() {
 		apiGroup.POST("/deployments/:id/runs", api.CreateDeploymentRun)
 		apiGroup.GET("/deployments/:id/runs", api.ListDeploymentRuns)
 		apiGroup.GET("/deployments/:id/runs/:runId", api.GetDeploymentRun)
+		apiGroup.GET("/deployments/:id/runs/:runId/stream", api.StreamDeploymentRunLogs)
 		apiGroup.POST("/deployments/:id/runs/:runId/approve", api.ApproveDeploymentRun)
+		apiGroup.POST("/deployments/:id/runs/:runId/cancel", api.CancelDeploymentRun)
 		apiGroup.GET("/deployments/:id/status", api.GetDirectoryStatus)
 	}
 

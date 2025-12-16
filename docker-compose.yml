@@ -1,15 +1,32 @@
 services:
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: iac-registry-backend
     volumes:
       - registry-data:/app/data
+      - deployment-workdir:/tmp/iac-deployments
     environment:
       - GIN_MODE=release
       - DB_PATH=/app/data/registry.db
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-to-a-secure-32-char-key!}
+      - RUNNER_URL=http://runner:8080
+    restart: unless-stopped
+    networks:
+      - registry-network
+    depends_on:
+      - runner
+
+  runner:
+    build:
+      context: ./runner
+      dockerfile: Dockerfile
+    container_name: iac-runner
+    ports:
+      - "8080:8080"
+    volumes:
+      - deployment-workdir:/tmp/iac-deployments
     restart: unless-stopped
     networks:
       - registry-network
@@ -29,6 +46,7 @@ services:
 
 volumes:
   registry-data:
+  deployment-workdir:
 
 networks:
   registry-network:
