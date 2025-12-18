@@ -8,6 +8,7 @@ import (
 	"iac-tool/internal/crypto"
 	"iac-tool/internal/database"
 	"iac-tool/internal/gpg"
+	"iac-tool/internal/registry"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -19,8 +20,19 @@ func main() {
 		log.Fatalf("Failed to initialize encryption: %v", err)
 	}
 
+	// Initialize registry token
+	if err := registry.InitToken(); err != nil {
+		log.Fatalf("Failed to initialize registry token: %v", err)
+	}
+	log.Println("✓ Registry authentication token initialized")
+
 	// Initialize database
 	if err := database.Init(); err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+
+	// Initialize runner API key (create if doesn't exist)
+	if err := api.InitRunnerAPIKey(); err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 
@@ -69,8 +81,8 @@ func main() {
 		// Module Registry Protocol
 		modules := v1.Group("/modules")
 		{
-			modules.GET("/:namespace/:provider/:name/versions", api.TFListModuleVersions)
-			modules.GET("/:namespace/:provider/:name/:version/download", api.TFDownloadModule)
+			modules.GET("/:namespace/:name/:provider/versions", api.TFListModuleVersions)
+			modules.GET("/:namespace/:name/:provider/:version/download", api.TFDownloadModule)
 		}
 
 		// Provider Registry Protocol
@@ -124,10 +136,10 @@ func main() {
 		apiGroup.PATCH("/namespaces/:id", api.UpdateNamespace)
 		apiGroup.DELETE("/namespaces/:id", api.DeleteNamespace)
 
-		// API Keys (for Terraform CLI access)
-		apiGroup.GET("/namespaces/:id/api-keys", api.GetAPIKeys)
-		apiGroup.POST("/namespaces/:id/api-keys", api.CreateAPIKey)
-		apiGroup.DELETE("/namespaces/:id/api-keys/:keyId", api.DeleteAPIKey)
+		// API Keys (global, for Terraform CLI access to all namespaces)
+		apiGroup.GET("/api-keys", api.GetAPIKeys)
+		apiGroup.POST("/api-keys", api.CreateAPIKey)
+		apiGroup.DELETE("/api-keys/:keyId", api.DeleteAPIKey)
 
 		// Deployments
 		apiGroup.GET("/deployments", api.ListDeployments)
@@ -136,6 +148,7 @@ func main() {
 		apiGroup.DELETE("/deployments/:id", api.DeleteDeployment)
 		apiGroup.GET("/deployments/:id/references", api.GetDeploymentReferences)
 		apiGroup.GET("/deployments/:id/browse", api.GetDeploymentDirectory)
+		apiGroup.GET("/deployments/:id/tfvars", api.GetTfvarsFiles)
 		apiGroup.POST("/deployments/:id/runs", api.CreateDeploymentRun)
 		apiGroup.GET("/deployments/:id/runs", api.ListDeploymentRuns)
 		apiGroup.GET("/deployments/:id/runs/:runId", api.GetDeploymentRun)
@@ -143,14 +156,26 @@ func main() {
 		apiGroup.POST("/deployments/:id/runs/:runId/approve", api.ApproveDeploymentRun)
 		apiGroup.POST("/deployments/:id/runs/:runId/cancel", api.CancelDeploymentRun)
 		apiGroup.GET("/deployments/:id/status", api.GetDirectoryStatus)
+
+		// Internal registry token endpoint (for runner)
+		apiGroup.GET("/internal/registry-token", api.GetRegistryToken)
 	}
 
-	log.Println("Terraform Private Registry starting on :9080")
-	log.Println("Service discovery: http://localhost:9080/.well-known/terraform.json")
-	log.Println("Module registry:   http://localhost:9080/v1/modules/")
-	log.Println("Provider registry: http://localhost:9080/v1/providers/")
-	log.Println("Management API:    http://localhost:9080/api/")
-	if err := r.Run(":9080"); err != nil {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "9080"
+	}
+	registryHost := os.Getenv("REGISTRY_HOST")
+	if registryHost == "" {
+		registryHost = "localhost"
+	}
+
+	log.Printf("Terraform Private Registry starting on :%s\n", port)
+	log.Printf("Service discovery: http://%s:%s/.well-known/terraform.json\n", registryHost, port)
+	log.Printf("Module registry:   http://%s:%s/v1/modules/\n", registryHost, port)
+	log.Printf("Provider registry: http://%s:%s/v1/providers/\n", registryHost, port)
+	log.Printf("Management API:    http://%s:%s/api/\n", registryHost, port)
+	if err := r.Run(":" + port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

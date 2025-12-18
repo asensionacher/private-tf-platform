@@ -1,12 +1,10 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
-import { Building2, Plus, Trash2, ChevronRight } from 'lucide-react';
+import { Building2, Plus, Trash2 } from 'lucide-react';
 import { namespacesApi } from '../api';
 import type { NamespaceCreate } from '../types';
 
 export default function NamespacesPage() {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState<NamespaceCreate>({
@@ -78,13 +76,10 @@ export default function NamespacesPage() {
             {namespaces.map((ns) => (
               <li
                 key={ns.id}
-                className="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer transition-colors"
+                className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
               >
                 <div className="px-4 py-4 sm:px-6 flex items-center justify-between">
-                  <div 
-                    className="flex items-center flex-1"
-                    onClick={() => navigate(`/namespaces/${ns.id}`)}
-                  >
+                  <div className="flex items-center flex-1">
                     <Building2 className="h-8 w-8 text-gray-400" />
                     <div className="ml-4">
                       <p className="text-sm font-medium text-gray-900 dark:text-white">
@@ -118,7 +113,6 @@ export default function NamespacesPage() {
                         <Trash2 className="h-4 w-4" />
                       </button>
                     )}
-                    <ChevronRight className="h-5 w-5 text-gray-400" />
                   </div>
                 </div>
               </li>

@@ -205,10 +205,13 @@ export interface DeploymentRun {
   ref: string;
   tool: 'terraform' | 'tofu';
   env_vars: Record<string, string>;
+  tfvars_files: string[];
   status: 'pending' | 'initializing' | 'planning' | 'awaiting_approval' | 'applying' | 'success' | 'failed' | 'cancelled';
   init_log: string;
   plan_log: string;
+  plan_output: string;
   apply_log: string;
+  apply_output: string;
   error_message?: string;
   work_dir: string;
   approved_by?: string;
@@ -224,6 +227,7 @@ export interface DeploymentRunCreate {
   ref: string;
   tool: 'terraform' | 'tofu';
   env_vars?: Record<string, string>;
+  tfvars_files?: string[];
 }
 
 export interface DeploymentRunApproval {

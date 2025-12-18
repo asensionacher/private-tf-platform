@@ -286,11 +286,17 @@ func CreateDeploymentRun(c *gin.Context) {
 	}
 
 	// Verify deployment exists
-	var gitURL string
-	err := database.DB.QueryRow("SELECT git_url FROM deployments WHERE id = ?", id).Scan(&gitURL)
+	var gitURL, workingDirectory string
+	err := database.DB.QueryRow("SELECT git_url, working_directory FROM deployments WHERE id = ?", id).Scan(&gitURL, &workingDirectory)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
 		return
+	}
+
+	// Use deployment's working_directory if path is not provided
+	deployPath := input.Path
+	if deployPath == "" {
+		deployPath = workingDirectory
 	}
 
 	runID := generateID()
@@ -299,10 +305,13 @@ func CreateDeploymentRun(c *gin.Context) {
 	// Serialize env vars to JSON
 	envVarsJSON, _ := json.Marshal(input.EnvVars)
 
+	// Serialize tfvars files to JSON
+	tfvarsFilesJSON, _ := json.Marshal(input.TfvarsFiles)
+
 	_, err = database.DB.Exec(`
-		INSERT INTO deployment_runs (id, deployment_id, path, ref, tool, env_vars, status, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
-	`, runID, input.DeploymentID, input.Path, input.Ref, input.Tool, string(envVarsJSON), now)
+		INSERT INTO deployment_runs (id, deployment_id, path, ref, tool, env_vars, tfvars_files, status, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+	`, runID, input.DeploymentID, deployPath, input.Ref, input.Tool, string(envVarsJSON), string(tfvarsFilesJSON), now)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -317,7 +326,7 @@ func CreateDeploymentRun(c *gin.Context) {
 	}
 
 	// Start the deployment asynchronously
-	go build.ExecuteDeploymentRun(runID, id, input.Path, input.Ref, input.Tool, input.EnvVars)
+	go build.ExecuteDeploymentRun(runID, id, deployPath, input.Ref, input.Tool, input.EnvVars, input.TfvarsFiles)
 
 	c.JSON(http.StatusCreated, run)
 }
@@ -542,17 +551,17 @@ func CancelDeploymentRun(c *gin.Context) {
 // getDeploymentRun is a helper to fetch a deployment run with all fields
 func getDeploymentRun(runID string) (*models.DeploymentRun, error) {
 	var run models.DeploymentRun
-	var envVarsJSON, initLog, planLog, applyLog, workDir, approvedBy sql.NullString
+	var envVarsJSON, tfvarsFilesJSON, initLog, planLog, planOutput, applyLog, applyOutput, workDir, approvedBy sql.NullString
 
 	err := database.DB.QueryRow(`
-		SELECT id, deployment_id, path, ref, tool, env_vars, status, 
-		       init_log, plan_log, apply_log, error_message, work_dir,
+		SELECT id, deployment_id, path, ref, tool, env_vars, tfvars_files, status, 
+		       init_log, plan_log, plan_output, apply_log, apply_output, error_message, work_dir,
 		       approved_by, approved_at, created_at, started_at, completed_at
 		FROM deployment_runs
 		WHERE id = ?
 	`, runID).Scan(
 		&run.ID, &run.DeploymentID, &run.Path, &run.Ref, &run.Tool,
-		&envVarsJSON, &run.Status, &initLog, &planLog, &applyLog,
+		&envVarsJSON, &tfvarsFilesJSON, &run.Status, &initLog, &planLog, &planOutput, &applyLog, &applyOutput,
 		&run.ErrorMessage, &workDir, &approvedBy, &run.ApprovedAt,
 		&run.CreatedAt, &run.StartedAt, &run.CompletedAt,
 	)
@@ -568,6 +577,13 @@ func getDeploymentRun(runID string) (*models.DeploymentRun, error) {
 		run.EnvVars = make(map[string]string)
 	}
 
+	// Parse tfvars files
+	if tfvarsFilesJSON.Valid && tfvarsFilesJSON.String != "" {
+		json.Unmarshal([]byte(tfvarsFilesJSON.String), &run.TfvarsFiles)
+	} else {
+		run.TfvarsFiles = make([]string, 0)
+	}
+
 	// Set nullable strings
 	if initLog.Valid {
 		run.InitLog = initLog.String
@@ -575,8 +591,14 @@ func getDeploymentRun(runID string) (*models.DeploymentRun, error) {
 	if planLog.Valid {
 		run.PlanLog = planLog.String
 	}
+	if planOutput.Valid {
+		run.PlanOutput = planOutput.String
+	}
 	if applyLog.Valid {
 		run.ApplyLog = applyLog.String
+	}
+	if applyOutput.Valid {
+		run.ApplyOutput = applyOutput.String
 	}
 	if workDir.Valid {
 		run.WorkDir = workDir.String
@@ -646,4 +668,67 @@ func StreamDeploymentRunLogs(c *gin.Context) {
 			break
 		}
 	}
+}
+
+// GetTfvarsFiles lists available .tfvars files in a deployment directory
+// GET /api/deployments/:id/tfvars?ref=main&path=/
+func GetTfvarsFiles(c *gin.Context) {
+	id := c.Param("id")
+	ref := c.Query("ref")
+	path := c.Query("path")
+
+	if ref == "" {
+		ref = "HEAD"
+	}
+	if path == "" {
+		path = ""
+	}
+
+	// Get deployment
+	var gitURL string
+	err := database.DB.QueryRow("SELECT git_url FROM deployments WHERE id = ?", id).Scan(&gitURL)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+
+	// Load auth config
+	var auth *git.AuthConfig
+	var authType sql.NullString
+	var authDataStr sql.NullString
+	err = database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM deployments WHERE id = ?", id).Scan(&authType, &authDataStr)
+	if err == nil && authType.Valid && authDataStr.Valid {
+		decryptedData, err := crypto.DecryptJSON(authDataStr.String)
+		if err == nil {
+			var authJSON map[string]string
+			if err := json.Unmarshal([]byte(decryptedData), &authJSON); err == nil {
+				auth = &git.AuthConfig{
+					Type:     authType.String,
+					Username: authJSON["username"],
+					Password: authJSON["password"],
+				}
+			}
+		}
+	}
+
+	// List directory
+	files, _, err := git.ListDirectory(gitURL, ref, path, auth)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list directory: " + err.Error()})
+		return
+	}
+
+	// Filter .tfvars and .tfvars.json files
+	var tfvarsFiles []string
+	for _, file := range files {
+		isDir, _ := file["is_dir"].(bool)
+		name, _ := file["name"].(string)
+		if !isDir && (strings.HasSuffix(name, ".tfvars") || strings.HasSuffix(name, ".tfvars.json")) {
+			tfvarsFiles = append(tfvarsFiles, name)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"tfvars_files": tfvarsFiles,
+	})
 }

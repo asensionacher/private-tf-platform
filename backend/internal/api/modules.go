@@ -23,11 +23,11 @@ import (
 // ============================================================================
 
 // TFListModuleVersions lists available versions for a specific module
-// GET /v1/modules/:namespace/:provider/:name/versions
+// GET /v1/modules/:namespace/:name/:provider/versions
 func TFListModuleVersions(c *gin.Context) {
 	namespace := c.Param("namespace")
-	provider := c.Param("provider")
 	name := c.Param("name")
+	provider := c.Param("provider")
 
 	// Get module
 	var moduleID string
@@ -76,11 +76,11 @@ func TFListModuleVersions(c *gin.Context) {
 }
 
 // TFDownloadModule returns the download URL for a specific module version
-// GET /v1/modules/:namespace/:provider/:name/:version/download
+// GET /v1/modules/:namespace/:name/:provider/:version/download
 func TFDownloadModule(c *gin.Context) {
 	namespace := c.Param("namespace")
-	provider := c.Param("provider")
 	name := c.Param("name")
+	provider := c.Param("provider")
 	version := c.Param("version")
 
 	// Get download URL (only if version is enabled)
@@ -650,9 +650,9 @@ func SyncModuleTags(c *gin.Context) {
 		var authJSON map[string]string
 		if err := json.Unmarshal([]byte(decryptedData), &authJSON); err == nil {
 			auth = &git.AuthConfig{
-				Type:       authType.String,
-				Username:   authJSON["username"],
-				Password:   authJSON["password"],
+				Type:     authType.String,
+				Username: authJSON["username"],
+				Password: authJSON["password"],
 			}
 		}
 	}
@@ -743,9 +743,9 @@ func syncModuleTagsBackgroundWithAuth(moduleID string, gitURL string, subdir *st
 			var authJSON map[string]string
 			if err := json.Unmarshal([]byte(decryptedData), &authJSON); err == nil {
 				auth = &git.AuthConfig{
-					Type:       authType.String,
-					Username:   authJSON["username"],
-					Password:   authJSON["password"],
+					Type:     authType.String,
+					Username: authJSON["username"],
+					Password: authJSON["password"],
 				}
 			}
 		}
@@ -895,9 +895,9 @@ func GetModuleReadme(c *gin.Context) {
 			var authJSON map[string]string
 			if err := json.Unmarshal([]byte(decryptedData), &authJSON); err == nil {
 				auth = &git.AuthConfig{
-					Type:       authType.String,
-					Username:   authJSON["username"],
-					Password:   authJSON["password"],
+					Type:     authType.String,
+					Username: authJSON["username"],
+					Password: authJSON["password"],
 				}
 			}
 		}

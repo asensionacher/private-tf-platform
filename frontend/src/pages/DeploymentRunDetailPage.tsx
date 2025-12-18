@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { deploymentsApi } from '../api';
 import { DeploymentRun } from '../types';
@@ -11,8 +11,6 @@ export default function DeploymentRunDetailPage() {
     const [error, setError] = useState<string | null>(null);
     const [approving, setApproving] = useState(false);
     const [cancelling, setCancelling] = useState(false);
-    const [streamingLogs, setStreamingLogs] = useState<string>('');
-    const eventSourceRef = useRef<EventSource | null>(null);
 
     useEffect(() => {
         loadRun();
@@ -32,62 +30,6 @@ export default function DeploymentRunDetailPage() {
         return () => clearInterval(interval);
     }, [run?.status, id, runId]);
 
-    // Connect to streaming logs when run is active or finished
-    useEffect(() => {
-        if (!run || !run.id) return;
-
-        // Connect for active runs to get live logs, and for finished runs to get buffered logs
-        const streamableStatuses = ['initializing', 'planning', 'awaiting_approval', 'applying', 'success', 'failed', 'cancelled'];
-        if (!streamableStatuses.includes(run.status)) {
-            // Close existing connection if status is not streamable
-            if (eventSourceRef.current) {
-                eventSourceRef.current.close();
-                eventSourceRef.current = null;
-            }
-            return;
-        }
-
-        // Close previous connection if exists
-        if (eventSourceRef.current) {
-            eventSourceRef.current.close();
-            eventSourceRef.current = null;
-        }
-
-        // Don't clear logs - keep accumulating for smooth transition
-        // Only clear on first connection (when streamingLogs is empty and status is initializing)
-        if (streamingLogs === '' && run.status === 'initializing') {
-            setStreamingLogs('');
-        }
-
-        // Connect to backend SSE proxy endpoint
-        const backendUrl = window.location.origin;
-        const streamUrl = `${backendUrl}/api/deployments/${id}/runs/${runId}/stream`;
-        console.log('Connecting to stream:', streamUrl, 'status:', run.status);
-
-        const eventSource = new EventSource(streamUrl);
-        eventSourceRef.current = eventSource;
-
-        eventSource.addEventListener('log', (event) => {
-            setStreamingLogs(prev => prev + event.data + '\n');
-        });
-
-        eventSource.onopen = () => {
-            console.log('Stream connection opened');
-        };
-
-        eventSource.onerror = (error) => {
-            console.error('Stream error:', error);
-            eventSource.close();
-            eventSourceRef.current = null;
-        };
-
-        return () => {
-            console.log('Closing stream connection');
-            eventSource.close();
-            eventSourceRef.current = null;
-        };
-    }, [run?.id, run?.status, id, runId]);
-
     const loadRun = async () => {
         if (!id || !runId) return;
 
@@ -101,6 +43,18 @@ export default function DeploymentRunDetailPage() {
         } finally {
             setLoading(false);
         }
+    };
+
+    const downloadLog = (content: string, filename: string) => {
+        const blob = new Blob([content], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     };
 
     const handleApprove = async (approved: boolean) => {
@@ -268,6 +222,21 @@ export default function DeploymentRunDetailPage() {
                     </div>
                 )}
 
+                {run.tfvars_files && run.tfvars_files.length > 0 && (
+                    <div className="mt-4">
+                        <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">Terraform Variables Files</p>
+                        <div className="bg-gray-50 dark:bg-gray-900 rounded p-3">
+                            <div className="flex flex-wrap gap-2">
+                                {run.tfvars_files.map((file, index) => (
+                                    <span key={index} className="px-3 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full text-sm font-mono">
+                                        {file}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {run.approved_by && (
                     <div className="mt-4">
                         <p className="text-sm text-gray-500 dark:text-gray-400">Approved By</p>
@@ -288,7 +257,7 @@ export default function DeploymentRunDetailPage() {
                 </div>
             )}
 
-            {/* Approval Section */}
+            {/* Approval Section - Always shown when awaiting approval */}
             {run.status === 'awaiting_approval' && (
                 <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg p-6">
                     <h3 className="text-lg font-semibold text-orange-900 dark:text-orange-300 mb-4">
@@ -322,63 +291,92 @@ export default function DeploymentRunDetailPage() {
                 </div>
             )}
 
-            {/* Live Streaming Logs (when running) */}
-            {streamingLogs && ['initializing', 'planning', 'awaiting_approval', 'applying'].includes(run.status) && (
-                <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-                    <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b border-gray-200 dark:border-gray-600 flex items-center gap-2">
-                        <div className="animate-pulse w-2 h-2 bg-green-500 rounded-full"></div>
-                        <h3 className="font-semibold text-gray-900 dark:text-white">Live Output</h3>
-                    </div>
-                    <div className="p-4 overflow-x-auto max-h-[600px] overflow-y-auto">
-                        <AnsiOutput content={streamingLogs} />
-                    </div>
-                </div>
-            )}
-
-            {/* Completed Logs (when finished) */}
-            {streamingLogs && ['success', 'failed', 'cancelled'].includes(run.status) && (
-                <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-                    <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b border-gray-200 dark:border-gray-600">
-                        <h3 className="font-semibold text-gray-900 dark:text-white">Execution Output</h3>
-                    </div>
-                    <div className="p-4 overflow-x-auto max-h-[600px] overflow-y-auto">
-                        <AnsiOutput content={streamingLogs} />
-                    </div>
-                </div>
-            )}
-
             {/* Init Log */}
-            {run.init_log && !['initializing'].includes(run.status) && (
+            {run.init_log && (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-                    <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b border-gray-200 dark:border-gray-600">
-                        <h3 className="font-semibold text-gray-900 dark:text-white">Init Output</h3>
+                    <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between">
+                        <h3 className="font-semibold text-gray-900 dark:text-white font-mono">{run.tool} init</h3>
+                        <button
+                            onClick={() => downloadLog(run.init_log, `${run.tool}-init-${runId}.log`)}
+                            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors flex items-center gap-1 text-sm"
+                            title="Download log"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                            Download
+                        </button>
                     </div>
-                    <div className="p-4 overflow-x-auto">
+                    <div className="p-4 overflow-x-auto max-h-[600px] overflow-y-auto">
                         <AnsiOutput content={run.init_log} />
                     </div>
                 </div>
             )}
 
             {/* Plan Log */}
-            {run.plan_log && !['planning'].includes(run.status) && (
+            {run.plan_log && (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-                    <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b border-gray-200 dark:border-gray-600">
-                        <h3 className="font-semibold text-gray-900 dark:text-white">Plan Output</h3>
+                    <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between">
+                        <h3 className="font-semibold text-gray-900 dark:text-white font-mono">
+                            {run.tool} plan -out=tfplan{run.tfvars_files && run.tfvars_files.length > 0 && run.tfvars_files.map(f => ` -var-file=${f}`).join('')}
+                        </h3>
+                        <button
+                            onClick={() => downloadLog(run.plan_log, `${run.tool}-plan-${runId}.log`)}
+                            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors flex items-center gap-1 text-sm"
+                            title="Download log"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                            Download
+                        </button>
                     </div>
-                    <div className="p-4 overflow-x-auto">
+                    <div className="p-4 overflow-x-auto max-h-[600px] overflow-y-auto">
                         <AnsiOutput content={run.plan_log} />
                     </div>
                 </div>
             )}
 
             {/* Apply Log */}
-            {run.apply_log && !['applying'].includes(run.status) && (
+            {run.apply_log && (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-                    <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b border-gray-200 dark:border-gray-600">
-                        <h3 className="font-semibold text-gray-900 dark:text-white">Apply Output</h3>
+                    <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between">
+                        <h3 className="font-semibold text-gray-900 dark:text-white font-mono">{run.tool} apply tfplan</h3>
+                        <button
+                            onClick={() => downloadLog(run.apply_log, `${run.tool}-apply-${runId}.log`)}
+                            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors flex items-center gap-1 text-sm"
+                            title="Download log"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                            Download
+                        </button>
                     </div>
-                    <div className="p-4 overflow-x-auto">
+                    <div className="p-4 overflow-x-auto max-h-[600px] overflow-y-auto">
                         <AnsiOutput content={run.apply_log} />
+                    </div>
+                </div>
+            )}
+
+            {/* Terraform/Tofu Outputs */}
+            {run.apply_output && (
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+                    <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between">
+                        <h3 className="font-semibold text-gray-900 dark:text-white font-mono">{run.tool} output -json</h3>
+                        <button
+                            onClick={() => downloadLog(run.apply_output, `${run.tool}-output-${runId}.json`)}
+                            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors flex items-center gap-1 text-sm"
+                            title="Download output"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                            Download
+                        </button>
+                    </div>
+                    <div className="p-4 overflow-x-auto max-h-[600px] overflow-y-auto">
+                        <AnsiOutput content={run.apply_output} />
                     </div>
                 </div>
             )}

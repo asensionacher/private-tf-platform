@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"os"
 
 	"github.com/gin-gonic/gin"
 )
@@ -27,5 +28,22 @@ func getBaseURL(c *gin.Context) string {
 	if proto := c.GetHeader("X-Forwarded-Proto"); proto != "" {
 		scheme = proto
 	}
-	return scheme + "://" + c.Request.Host
+
+	host := c.Request.Host
+	// Use configured registry host from environment
+	registryHost := os.Getenv("REGISTRY_HOST")
+	if registryHost == "" {
+		registryHost = "registry.local"
+	}
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "9080"
+	}
+
+	// If Host doesn't include a port, use configured values
+	if host == "localhost" || host == registryHost {
+		host = registryHost + ":" + port
+	}
+
+	return scheme + "://" + host
 }

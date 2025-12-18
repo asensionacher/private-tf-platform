@@ -46,18 +46,17 @@ func createTables() error {
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);`
 
-	// API Keys table for authentication
+	// API Keys table for authentication (global, not tied to namespaces)
 	apiKeysTable := `
 	CREATE TABLE IF NOT EXISTS api_keys (
 		id TEXT PRIMARY KEY,
-		namespace_id TEXT NOT NULL,
 		name TEXT NOT NULL,
 		key_hash TEXT NOT NULL UNIQUE,
+		key_encrypted TEXT,
 		permissions TEXT NOT NULL CHECK(permissions IN ('read', 'write', 'admin')),
 		expires_at DATETIME,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		last_used_at DATETIME,
-		FOREIGN KEY (namespace_id) REFERENCES namespaces(id) ON DELETE CASCADE
+		last_used_at DATETIME
 	);`
 
 	// Modules table
@@ -69,7 +68,12 @@ func createTables() error {
 		provider TEXT NOT NULL,
 		description TEXT,
 		source_url TEXT,
+		git_url TEXT,
+		git_ref TEXT,
+		git_auth_type TEXT,
+		git_auth_data TEXT,
 		synced BOOLEAN DEFAULT FALSE,
+		sync_error TEXT,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (namespace_id) REFERENCES namespaces(id) ON DELETE CASCADE,
@@ -85,6 +89,7 @@ func createTables() error {
 		download_url TEXT NOT NULL,
 		documentation TEXT,
 		enabled BOOLEAN DEFAULT TRUE,
+		tag_date DATETIME,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (module_id) REFERENCES modules(id) ON DELETE CASCADE,
 		UNIQUE(module_id, version)
@@ -135,6 +140,54 @@ func createTables() error {
 		UNIQUE(version_id, os, arch)
 	);`
 
+	// Deployments table
+	deploymentsTable := `
+	CREATE TABLE IF NOT EXISTS deployments (
+		id TEXT PRIMARY KEY,
+		namespace_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		description TEXT,
+		terraform_version TEXT,
+		backend_config TEXT,
+		git_url TEXT NOT NULL,
+		git_ref TEXT NOT NULL DEFAULT 'main',
+		git_auth_type TEXT,
+		git_auth_data TEXT,
+		working_directory TEXT DEFAULT '.',
+		terraform_vars TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (namespace_id) REFERENCES namespaces(id) ON DELETE CASCADE,
+		UNIQUE(namespace_id, name)
+	);`
+
+	// Deployment Runs table
+	deploymentRunsTable := `
+	CREATE TABLE IF NOT EXISTS deployment_runs (
+		id TEXT PRIMARY KEY,
+		deployment_id TEXT NOT NULL,
+		path TEXT,
+		ref TEXT,
+		tool TEXT,
+		env_vars TEXT,
+		tfvars_files TEXT,
+		status TEXT NOT NULL CHECK(status IN ('pending', 'initializing', 'planning', 'planned', 'awaiting_approval', 'applying', 'applied', 'destroying', 'destroyed', 'success', 'failed', 'cancelled')) DEFAULT 'pending',
+		init_log TEXT,
+		plan_log TEXT,
+		plan_output TEXT,
+		plan_file_path TEXT,
+		apply_log TEXT,
+		apply_output TEXT,
+		error_message TEXT,
+		work_dir TEXT,
+		approved_by TEXT,
+		approved_at DATETIME,
+		started_at DATETIME,
+		completed_at DATETIME,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (deployment_id) REFERENCES deployments(id) ON DELETE CASCADE
+	);`
+
 	tables := []string{
 		namespacesTable,
 		apiKeysTable,
@@ -143,6 +196,8 @@ func createTables() error {
 		providersTable,
 		providerVersionsTable,
 		providerPlatformsTable,
+		deploymentsTable,
+		deploymentRunsTable,
 	}
 
 	for _, table := range tables {

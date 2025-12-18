@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { deploymentsApi } from '../api';
 
 interface DeploymentModalProps {
@@ -12,8 +12,23 @@ interface DeploymentModalProps {
 export default function DeploymentModal({ deploymentId, path, gitRef, onClose, onSuccess }: DeploymentModalProps) {
     const [tool, setTool] = useState<'terraform' | 'tofu'>('terraform');
     const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([]);
+    const [availableTfvars, setAvailableTfvars] = useState<string[]>([]);
+    const [selectedTfvars, setSelectedTfvars] = useState<string[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    // Load available tfvars files
+    useEffect(() => {
+        const loadTfvars = async () => {
+            try {
+                const result = await deploymentsApi.getTfvarsFiles(deploymentId, gitRef, path);
+                setAvailableTfvars(result.tfvars_files || []);
+            } catch (err) {
+                console.error('Failed to load tfvars files:', err);
+            }
+        };
+        loadTfvars();
+    }, [deploymentId, gitRef, path]);
 
     const handleAddEnvVar = () => {
         setEnvVars([...envVars, { key: '', value: '' }]);
@@ -27,6 +42,14 @@ export default function DeploymentModal({ deploymentId, path, gitRef, onClose, o
         const newEnvVars = [...envVars];
         newEnvVars[index][field] = value;
         setEnvVars(newEnvVars);
+    };
+
+    const handleTfvarsToggle = (tfvarsFile: string) => {
+        if (selectedTfvars.includes(tfvarsFile)) {
+            setSelectedTfvars(selectedTfvars.filter(f => f !== tfvarsFile));
+        } else {
+            setSelectedTfvars([...selectedTfvars, tfvarsFile]);
+        }
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -47,7 +70,8 @@ export default function DeploymentModal({ deploymentId, path, gitRef, onClose, o
                 path,
                 ref: gitRef,
                 tool,
-                env_vars: Object.keys(envVarsObj).length > 0 ? envVarsObj : undefined
+                env_vars: Object.keys(envVarsObj).length > 0 ? envVarsObj : undefined,
+                tfvars_files: selectedTfvars.length > 0 ? selectedTfvars : undefined
             });
 
             onSuccess();
@@ -171,7 +195,33 @@ export default function DeploymentModal({ deploymentId, path, gitRef, onClose, o
                         )}
                     </div>
 
-                    <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    {availableTfvars.length > 0 && (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Terraform Variables Files
+                            </label>
+                            <div className="space-y-2 max-h-40 overflow-y-auto border border-gray-300 dark:border-gray-600 rounded-lg p-3">
+                                {availableTfvars.map((tfvarsFile) => (
+                                    <label key={tfvarsFile} className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 p-2 rounded">
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedTfvars.includes(tfvarsFile)}
+                                            onChange={() => handleTfvarsToggle(tfvarsFile)}
+                                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm font-mono text-gray-900 dark:text-white">{tfvarsFile}</span>
+                                    </label>
+                                ))}
+                            </div>
+                            {selectedTfvars.length > 0 && (
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                                    {selectedTfvars.length} file{selectedTfvars.length > 1 ? 's' : ''} selected
+                                </p>
+                            )}
+                        </div>
+                    )}
+
+                    <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">"
                         <button
                             type="button"
                             onClick={onClose}

@@ -22,8 +22,11 @@ import type {
   DirectoryStatus
 } from '../types';
 
+// Use environment variable for API base URL, fallback to relative path
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: apiBaseUrl,
 });
 
 // No authentication needed for management API
@@ -142,7 +145,11 @@ export const deploymentsApi = {
     const params = path ? { ref, path } : { ref };
     return api.get<DirectoryListing>(`/deployments/${id}/browse`, { params }).then(res => res.data);
   },
-  createRun: (id: string, data: { path: string, ref: string, tool: 'terraform' | 'tofu', env_vars?: Record<string, string> }) =>
+  getTfvarsFiles: (id: string, ref: string, path?: string) => {
+    const params = path ? { ref, path } : { ref };
+    return api.get<{ tfvars_files: string[] }>(`/deployments/${id}/tfvars`, { params }).then(res => res.data);
+  },
+  createRun: (id: string, data: { path: string, ref: string, tool: 'terraform' | 'tofu', env_vars?: Record<string, string>, tfvars_files?: string[] }) =>
     api.post<DeploymentRun>(`/deployments/${id}/runs`, { deployment_id: id, ...data }).then(res => res.data),
   getRuns: (id: string, path?: string) => {
     const params = path ? { path } : {};

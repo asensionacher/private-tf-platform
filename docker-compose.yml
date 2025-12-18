@@ -4,6 +4,8 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     container_name: iac-registry-backend
+    ports:
+      - "9080:9080"
     volumes:
       - registry-data:/app/data
       - deployment-workdir:/tmp/iac-deployments
@@ -11,7 +13,7 @@ services:
       - GIN_MODE=release
       - DB_PATH=/app/data/registry.db
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-to-a-secure-32-char-key!}
-      - RUNNER_URL=http://runner:8080
+      - RUNNER_URL=${RUNNER_URL:-http://runner:8080}
     restart: unless-stopped
     networks:
       - registry-network
@@ -27,6 +29,11 @@ services:
       - "8080:8080"
     volumes:
       - deployment-workdir:/tmp/iac-deployments
+    environment:
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
+      - REGISTRY_URL=${REGISTRY_URL:-http://registry.local:9080}
+    extra_hosts:
+      - "registry.local:host-gateway"
     restart: unless-stopped
     networks:
       - registry-network
@@ -38,6 +45,8 @@ services:
     container_name: iac-registry-frontend
     ports:
       - "3000:80"
+    environment:
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL:-}
     depends_on:
       - backend
     restart: unless-stopped

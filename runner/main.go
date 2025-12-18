@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -25,6 +26,7 @@ type DeploymentRequest struct {
 	GitRef      string            `json:"git_ref" binding:"required"` // Branch, tag, or commit
 	Path        string            `json:"path"`                       // Path within repo (default: root)
 	EnvVars     map[string]string `json:"env_vars"`                   // Environment variables
+	TfvarsFiles []string          `json:"tfvars_files"`               // List of .tfvars files to use
 	Timeout     int               `json:"timeout"`                    // Timeout in minutes (default: 60)
 	GitAuth     *GitAuth          `json:"git_auth,omitempty"`         // Git authentication
 	AutoApprove bool              `json:"auto_approve"`               // Auto-approve terraform apply
@@ -54,7 +56,9 @@ type DeploymentStatus struct {
 	Error        string     `json:"error,omitempty"`
 	InitLog      string     `json:"init_log,omitempty"`
 	PlanLog      string     `json:"plan_log,omitempty"`
+	PlanOutput   string     `json:"plan_output,omitempty"`
 	ApplyLog     string     `json:"apply_log,omitempty"`
+	ApplyOutput  string     `json:"apply_output,omitempty"`
 }
 
 // Deployment represents an active deployment
@@ -79,9 +83,14 @@ func main() {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 
-	// CORS middleware
+	// CORS middleware with configurable origins
+	allowedOrigins := os.Getenv("ALLOWED_ORIGINS")
+	if allowedOrigins == "" {
+		allowedOrigins = "*"
+	}
+
 	r.Use(func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		c.Writer.Header().Set("Access-Control-Allow-Origin", allowedOrigins)
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if c.Request.Method == "OPTIONS" {
@@ -349,7 +358,13 @@ func executeDeployment(deployment *Deployment) {
 	}
 	deployment.updateStatus("running", "plan", "")
 	deployment.log("Running terraform plan...")
-	planLog, err := runTerraformCommand(deployment, deployPath, "plan", []string{"-out=tfplan"})
+	planArgs := []string{"-out=tfplan"}
+	// Add tfvars files
+	for _, tfvarsFile := range deployment.Request.TfvarsFiles {
+		planArgs = append(planArgs, "-var-file="+tfvarsFile)
+		deployment.log(fmt.Sprintf("Using tfvars file: %s", tfvarsFile))
+	}
+	planLog, err := runTerraformCommand(deployment, deployPath, "plan", planArgs)
 	deployment.Status.PlanLog = planLog
 	if err != nil {
 		deployment.updateStatus("failed", "plan", fmt.Sprintf("Plan failed: %v", err))
@@ -391,6 +406,16 @@ func executeDeployment(deployment *Deployment) {
 	if err != nil {
 		deployment.updateStatus("failed", "apply", fmt.Sprintf("Apply failed: %v", err))
 		return
+	}
+
+	// Get terraform outputs
+	deployment.log("Retrieving outputs...")
+	outputLog, err := runTerraformCommand(deployment, deployPath, "output", []string{"-json"})
+	if err != nil {
+		// Non-fatal if there are no outputs
+		deployment.log("No outputs available")
+	} else {
+		deployment.Status.ApplyOutput = outputLog
 	}
 
 	// Success
@@ -448,6 +473,18 @@ func runTerraformCommand(deployment *Deployment, workDir, command string, args [
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 	}
 
+	// Configure private registry if REGISTRY_URL is set
+	if registryURL := os.Getenv("REGISTRY_URL"); registryURL != "" {
+		terraformrcPath := filepath.Join(workDir, ".terraformrc")
+		if err := configureTerraformRegistry(workDir, registryURL); err != nil {
+			deployment.log(fmt.Sprintf("Warning: Failed to configure private registry: %v", err))
+		} else {
+			// Set TF_CLI_CONFIG_FILE environment variable
+			cmd.Env = append(cmd.Env, fmt.Sprintf("TF_CLI_CONFIG_FILE=%s", terraformrcPath))
+			deployment.log(fmt.Sprintf("✓ Configured private registry: %s", registryURL))
+		}
+	}
+
 	// Use PTY for colored output
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
@@ -498,4 +535,63 @@ func (d *Deployment) log(message string) {
 	default:
 		// Channel full or no listeners, log already in buffer
 	}
+}
+
+func configureTerraformRegistry(workDir, registryURL string) error {
+	// Create .terraformrc in the work directory
+	terraformrcPath := filepath.Join(workDir, ".terraformrc")
+
+	// Parse registry URL to get host
+	registryHost := strings.TrimPrefix(registryURL, "http://")
+	registryHost = strings.TrimPrefix(registryHost, "https://")
+
+	// Fetch token from backend (this token will work for all private namespaces from runner)
+	token, err := fetchRegistryToken(registryURL)
+	if err != nil {
+		// If we can't get the token, continue without auth (for development)
+		log.Printf("Warning: Could not fetch registry token: %v", err)
+		token = "no-auth"
+	}
+
+	// Configure .terraformrc with single credential for the entire registry
+	content := fmt.Sprintf(`# Terraform Registry Configuration
+# Single credential for both public namespaces and runner access to private namespaces
+
+credentials "%s" {
+  token = "%s"
+}
+
+# Private Registry Configuration
+host "%s" {
+  services = {
+    "modules.v1"   = "%s/v1/modules/",
+    "providers.v1" = "%s/v1/providers/"
+  }
+}
+`, registryHost, token, registryHost, registryURL, registryURL)
+
+	return os.WriteFile(terraformrcPath, []byte(content), 0644)
+}
+
+// fetchRegistryToken gets the authentication token from the backend
+func fetchRegistryToken(registryURL string) (string, error) {
+	resp, err := http.Get(registryURL + "/api/internal/registry-token")
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("backend returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Token string `json:"token"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	return result.Token, nil
 }

@@ -8,6 +8,7 @@ import (
 	"iac-tool/internal/crypto"
 	"iac-tool/internal/database"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -20,6 +21,7 @@ type RunnerDeploymentRequest struct {
 	GitRef      string            `json:"git_ref"`
 	Path        string            `json:"path"`
 	EnvVars     map[string]string `json:"env_vars"`
+	TfvarsFiles []string          `json:"tfvars_files"`
 	Timeout     int               `json:"timeout"`
 	GitAuth     *RunnerGitAuth    `json:"git_auth,omitempty"`
 	AutoApprove bool              `json:"auto_approve"`
@@ -46,11 +48,13 @@ type RunnerDeploymentStatus struct {
 	Error        string     `json:"error,omitempty"`
 	InitLog      string     `json:"init_log,omitempty"`
 	PlanLog      string     `json:"plan_log,omitempty"`
+	PlanOutput   string     `json:"plan_output,omitempty"`
 	ApplyLog     string     `json:"apply_log,omitempty"`
+	ApplyOutput  string     `json:"apply_output,omitempty"`
 }
 
 // ExecuteDeploymentRun executes a deployment run via the runner HTTP API
-func ExecuteDeploymentRun(runID, deploymentID, path, ref, tool string, envVars map[string]string) {
+func ExecuteDeploymentRun(runID, deploymentID, path, ref, tool string, envVars map[string]string, tfvarsFiles []string) {
 	// Mark as initializing
 	now := time.Now()
 	database.DB.Exec(`
@@ -95,6 +99,7 @@ WHERE id = ?
 		GitRef:      ref,
 		Path:        path,
 		EnvVars:     envVars,
+		TfvarsFiles: tfvarsFiles,
 		Timeout:     60,
 		GitAuth:     gitAuth,
 		AutoApprove: false, // Manual approval required
@@ -142,6 +147,9 @@ func pollRunnerStatus(runID, runnerDeploymentID, runnerURL string) {
 
 	timeout := time.After(2 * time.Hour)
 	firstUpdate := true
+	waitingForApproval := false
+
+	log.Printf("Starting polling for run %s, runner deployment %s", runID, runnerDeploymentID)
 
 	for {
 		select {
@@ -149,15 +157,19 @@ func pollRunnerStatus(runID, runnerDeploymentID, runnerURL string) {
 			// Get status from runner
 			resp, err := http.Get(fmt.Sprintf("%s/deploy/%s/status", runnerURL, runnerDeploymentID))
 			if err != nil {
+				log.Printf("Error getting status from runner: %v", err)
 				continue
 			}
 
 			var status RunnerDeploymentStatus
 			if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
 				resp.Body.Close()
+				log.Printf("Error decoding runner status: %v", err)
 				continue
 			}
 			resp.Body.Close()
+
+			log.Printf("Runner status: status=%s, phase=%s", status.Status, status.Phase)
 
 			// Update started_at on first update
 			if firstUpdate && status.StartedAt.Unix() > 0 {
@@ -165,43 +177,88 @@ func pollRunnerStatus(runID, runnerDeploymentID, runnerURL string) {
 				firstUpdate = false
 			}
 
-			// Update database
-			database.DB.Exec(`
-			UPDATE deployment_runs 
-			SET status = ?, init_log = ?, plan_log = ?, apply_log = ?
-			WHERE id = ?
-		`, status.Phase, status.InitLog, status.PlanLog, status.ApplyLog, runID)
+			// Always update logs - this ensures logs are visible while waiting for approval
+			result, err := database.DB.Exec(`
+				UPDATE deployment_runs 
+				SET init_log = ?, plan_log = ?, plan_output = ?, apply_log = ?, apply_output = ?
+				WHERE id = ?
+			`, status.InitLog, status.PlanLog, status.PlanOutput, status.ApplyLog, status.ApplyOutput, runID)
+			if err != nil {
+				log.Printf("Error updating logs: %v", err)
+			} else {
+				rows, _ := result.RowsAffected()
+				log.Printf("Updated logs, rows affected: %d", rows)
+			}
+
+			// Update status based on phase (if not waiting for approval)
+			if !waitingForApproval && status.Phase != "" {
+				log.Printf("Updating status to phase: %s", status.Phase)
+				result, err := database.DB.Exec(`UPDATE deployment_runs SET status = ? WHERE id = ?`, status.Phase, runID)
+				if err != nil {
+					log.Printf("Error updating status to phase: %v", err)
+				} else {
+					rows, _ := result.RowsAffected()
+					log.Printf("Updated status to %s, rows affected: %d", status.Phase, rows)
+				}
+			}
 
 			// Check if waiting for approval
-			if status.Status == "awaiting_approval" {
-				database.DB.Exec(`UPDATE deployment_runs SET status = 'awaiting_approval' WHERE id = ?`, runID)
-
-				// Wait for approval in database
-				if !waitForApproval(runID, runnerDeploymentID, runnerURL, 24*time.Hour) {
-					// Rejected - continue polling to get the final status from runner
-					time.Sleep(1 * time.Second)
-					continue
+			if status.Status == "awaiting_approval" && !waitingForApproval {
+				waitingForApproval = true
+				log.Printf("Deployment is awaiting approval, updating status")
+				result, err := database.DB.Exec(`UPDATE deployment_runs SET status = 'awaiting_approval' WHERE id = ?`, runID)
+				if err != nil {
+					log.Printf("Error updating status to awaiting_approval: %v", err)
+				} else {
+					rows, _ := result.RowsAffected()
+					log.Printf("Updated status to awaiting_approval, rows affected: %d", rows)
 				}
-				// Approved - continue polling for apply phase
+			}
+
+			// If waiting for approval, check database for approval decision
+			if waitingForApproval {
+				var approvedBy sql.NullString
+				err := database.DB.QueryRow(`SELECT approved_by FROM deployment_runs WHERE id = ?`, runID).Scan(&approvedBy)
+
+				if err == nil && approvedBy.Valid {
+					if approvedBy.String == "REJECTED" {
+						// Send rejection to runner
+						log.Printf("Approval rejected, sending to runner")
+						http.Post(fmt.Sprintf("%s/deploy/%s/reject", runnerURL, runnerDeploymentID), "application/json", nil)
+						waitingForApproval = false
+						// Continue polling to get final status
+						continue
+					} else {
+						// Send approval to runner
+						log.Printf("Approval granted, sending to runner")
+						http.Post(fmt.Sprintf("%s/deploy/%s/approve", runnerURL, runnerDeploymentID), "application/json", nil)
+						database.DB.Exec(`UPDATE deployment_runs SET status = 'applying' WHERE id = ?`, runID)
+						waitingForApproval = false
+						// Continue polling for apply phase
+						continue
+					}
+				}
+				// Still waiting, continue polling
 				continue
 			}
 
 			// Check if deployment finished
 			if status.Status == "success" {
+				log.Printf("Deployment successful")
 				database.DB.Exec(`
-				UPDATE deployment_runs 
-				SET status = 'success', completed_at = ? 
-				WHERE id = ?
-			`, time.Now(), runID)
+					UPDATE deployment_runs 
+					SET status = 'success', completed_at = ? 
+					WHERE id = ?
+				`, time.Now(), runID)
 				return
 			}
 
 			if status.Status == "failed" || status.Status == "cancelled" {
 				database.DB.Exec(`
-				UPDATE deployment_runs 
-				SET status = ?, error_message = ?, completed_at = ? 
-				WHERE id = ?
-			`, status.Status, status.Error, time.Now(), runID)
+					UPDATE deployment_runs 
+					SET status = ?, error_message = ?, completed_at = ? 
+					WHERE id = ?
+				`, status.Status, status.Error, time.Now(), runID)
 				return
 			}
 
@@ -210,34 +267,6 @@ func pollRunnerStatus(runID, runnerDeploymentID, runnerURL string) {
 			return
 		}
 	}
-}
-
-func waitForApproval(runID, runnerDeploymentID, runnerURL string, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-
-	for time.Now().Before(deadline) {
-		var approvedBy sql.NullString
-		err := database.DB.QueryRow(`
-SELECT approved_by FROM deployment_runs WHERE id = ?
-`, runID).Scan(&approvedBy)
-
-		if err == nil && approvedBy.Valid {
-			if approvedBy.String == "REJECTED" {
-				// Send rejection to runner (runner will update status to cancelled)
-				http.Post(fmt.Sprintf("%s/deploy/%s/reject", runnerURL, runnerDeploymentID), "application/json", nil)
-				return false
-			} else {
-				// Send approval to runner
-				http.Post(fmt.Sprintf("%s/deploy/%s/approve", runnerURL, runnerDeploymentID), "application/json", nil)
-				database.DB.Exec(`UPDATE deployment_runs SET status = 'applying' WHERE id = ?`, runID)
-				return true
-			}
-		}
-
-		time.Sleep(2 * time.Second)
-	}
-
-	return false
 }
 
 func failRun(runID, errorMsg string) {

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -14,7 +15,59 @@ import (
 
 	"iac-tool/internal/database"
 	"iac-tool/internal/models"
+	"iac-tool/internal/registry"
 )
+
+var runnerAPIKey string
+
+// InitRunnerAPIKey creates or retrieves the runner API key
+func InitRunnerAPIKey() error {
+	// Check if runner API key already exists
+	var existingKey string
+	err := database.DB.QueryRow(`
+		SELECT key_hash FROM api_keys 
+		WHERE name = '__runner__'
+		LIMIT 1
+	`).Scan(&existingKey)
+
+	if err == nil {
+		log.Println("✓ Runner API key already exists")
+		return nil
+	}
+
+	// Create new runner API key
+	key, err := generateAPIKey()
+	if err != nil {
+		return err
+	}
+
+	runnerAPIKey = key
+	keyHash := hashAPIKey(key)
+	id := uuid.New().String()
+	now := time.Now()
+
+	_, err = database.DB.Exec(`
+		INSERT INTO api_keys (id, name, key_hash, permissions, created_at)
+		VALUES (?, '__runner__', ?, 'admin', ?)
+	`, id, keyHash, now)
+
+	if err != nil {
+		return err
+	}
+
+	log.Printf("✓ Runner API key created: %s", key)
+	return nil
+}
+
+// GetRunnerAPIKey returns the runner API key (for display purposes)
+func GetRunnerAPIKey() string {
+	if runnerAPIKey != "" {
+		return runnerAPIKey
+	}
+
+	// If not in memory, we can't retrieve it (it's hashed in DB)
+	return ""
+}
 
 // generateAPIKey creates a cryptographically secure API key
 func generateAPIKey() (string, error) {
@@ -78,21 +131,28 @@ func TerraformAuthMiddleware() gin.HandlerFunc {
 		}
 
 		token := parts[1]
+
+		// Check if it's the internal registry token (allows access to all private namespaces from runner)
+		registryToken := registry.GetToken()
+		if token == registryToken {
+			c.Next()
+			return
+		}
+
 		keyHash := hashAPIKey(token)
 
-		// Look up the API key
+		// Look up the global API key
 		var apiKey models.APIKey
 		var expiresAt sql.NullTime
 		err = database.DB.QueryRow(`
-			SELECT ak.id, ak.namespace_id, ak.name, ak.permissions, ak.expires_at
-			FROM api_keys ak
-			JOIN namespaces n ON ak.namespace_id = n.id
-			WHERE ak.key_hash = ? AND n.name = ?
-		`, keyHash, namespace).Scan(&apiKey.ID, &apiKey.NamespaceID, &apiKey.Name, &apiKey.Permissions, &expiresAt)
+			SELECT id, name, permissions, expires_at
+			FROM api_keys
+			WHERE key_hash = ?
+		`, keyHash).Scan(&apiKey.ID, &apiKey.Name, &apiKey.Permissions, &expiresAt)
 
 		if err == sql.ErrNoRows {
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"errors": []string{"Invalid API key for this namespace"},
+				"errors": []string{"Invalid API key"},
 			})
 			c.Abort()
 			return
@@ -324,13 +384,12 @@ func DeleteNamespace(c *gin.Context) {
 
 // GetAPIKeys returns API keys for a namespace
 func GetAPIKeys(c *gin.Context) {
-	namespaceID := c.Param("id")
-
+	// Get all global API keys
 	rows, err := database.DB.Query(`
-		SELECT id, namespace_id, name, permissions, expires_at, created_at, last_used_at
-		FROM api_keys WHERE namespace_id = ?
+		SELECT id, name, permissions, expires_at, created_at, last_used_at
+		FROM api_keys 
 		ORDER BY created_at DESC
-	`, namespaceID)
+	`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -341,7 +400,7 @@ func GetAPIKeys(c *gin.Context) {
 	for rows.Next() {
 		var key models.APIKey
 		var expiresAt, lastUsedAt sql.NullTime
-		if err := rows.Scan(&key.ID, &key.NamespaceID, &key.Name, &key.Permissions, &expiresAt, &key.CreatedAt, &lastUsedAt); err != nil {
+		if err := rows.Scan(&key.ID, &key.Name, &key.Permissions, &expiresAt, &key.CreatedAt, &lastUsedAt); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -357,27 +416,13 @@ func GetAPIKeys(c *gin.Context) {
 	c.JSON(http.StatusOK, keys)
 }
 
-// CreateAPIKey creates a new API key for a namespace
+// CreateAPIKey creates a new global API key (works for all namespaces)
 func CreateAPIKey(c *gin.Context) {
-	namespaceID := c.Param("id")
-
-	// Verify namespace exists
-	var exists bool
-	database.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM namespaces WHERE id = ?)", namespaceID).Scan(&exists)
-	if !exists {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Namespace not found"})
-		return
+	var input struct {
+		Name string `json:"name" binding:"required"`
 	}
-
-	var input models.APIKeyCreate
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Validate permissions
-	if input.Permissions != "read" && input.Permissions != "write" && input.Permissions != "admin" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid permissions. Must be read, write, or admin"})
 		return
 	}
 
@@ -392,10 +437,11 @@ func CreateAPIKey(c *gin.Context) {
 	id := uuid.New().String()
 	now := time.Now()
 
+	// Create global API key with admin permissions
 	_, err = database.DB.Exec(`
-		INSERT INTO api_keys (id, namespace_id, name, key_hash, permissions, expires_at, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, id, namespaceID, input.Name, keyHash, input.Permissions, input.ExpiresAt, now)
+		INSERT INTO api_keys (id, name, key_hash, permissions, created_at)
+		VALUES (?, ?, ?, 'admin', ?)
+	`, id, input.Name, keyHash, now)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -404,11 +450,9 @@ func CreateAPIKey(c *gin.Context) {
 
 	apiKey := models.APIKey{
 		ID:          id,
-		NamespaceID: namespaceID,
 		Name:        input.Name,
 		Key:         key, // Only returned on creation
-		Permissions: input.Permissions,
-		ExpiresAt:   input.ExpiresAt,
+		Permissions: "admin",
 		CreatedAt:   now,
 	}
 
@@ -418,6 +462,19 @@ func CreateAPIKey(c *gin.Context) {
 // DeleteAPIKey deletes an API key
 func DeleteAPIKey(c *gin.Context) {
 	keyID := c.Param("keyId")
+
+	// Check if it's the runner API key
+	var name string
+	err := database.DB.QueryRow("SELECT name FROM api_keys WHERE id = ?", keyID).Scan(&name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "API key not found"})
+		return
+	}
+
+	if name == "__runner__" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot delete runner API key"})
+		return
+	}
 
 	result, err := database.DB.Exec("DELETE FROM api_keys WHERE id = ?", keyID)
 	if err != nil {

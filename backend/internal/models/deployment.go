@@ -60,12 +60,15 @@ type DeploymentRun struct {
 	DeploymentID string            `json:"deployment_id"`
 	Path         string            `json:"path"`
 	Ref          string            `json:"ref"`
-	Tool         string            `json:"tool"`      // "tofu" or "terraform"
-	EnvVars      map[string]string `json:"env_vars"`  // Environment variables
-	Status       string            `json:"status"`    // "pending", "initializing", "planning", "awaiting_approval", "applying", "success", "failed", "cancelled"
-	InitLog      string            `json:"init_log"`  // Init command output
-	PlanLog      string            `json:"plan_log"`  // Plan command output
-	ApplyLog     string            `json:"apply_log"` // Apply command output
+	Tool         string            `json:"tool"`         // "tofu" or "terraform"
+	EnvVars      map[string]string `json:"env_vars"`     // Environment variables
+	TfvarsFiles  []string          `json:"tfvars_files"` // List of .tfvars files to use
+	Status       string            `json:"status"`       // "pending", "initializing", "planning", "awaiting_approval", "applying", "success", "failed", "cancelled"
+	InitLog      string            `json:"init_log"`     // Init command output
+	PlanLog      string            `json:"plan_log"`     // Plan command output
+	PlanOutput   string            `json:"plan_output"`  // Plan outputs (terraform output)
+	ApplyLog     string            `json:"apply_log"`    // Apply command output
+	ApplyOutput  string            `json:"apply_output"` // Apply outputs (terraform output)
 	ErrorMessage *string           `json:"error_message,omitempty"`
 	WorkDir      string            `json:"work_dir"` // Temporary work directory
 	ApprovedBy   *string           `json:"approved_by,omitempty"`
@@ -78,10 +81,11 @@ type DeploymentRun struct {
 // DeploymentRunCreate is used for creating a new deployment run
 type DeploymentRunCreate struct {
 	DeploymentID string            `json:"deployment_id" binding:"required"`
-	Path         string            `json:"path" binding:"required"`
+	Path         string            `json:"path"` // Working directory path (optional, defaults to deployment working_directory)
 	Ref          string            `json:"ref" binding:"required"`
 	Tool         string            `json:"tool" binding:"required"` // "tofu" or "terraform"
 	EnvVars      map[string]string `json:"env_vars,omitempty"`      // Environment variables
+	TfvarsFiles  []string          `json:"tfvars_files,omitempty"`  // List of .tfvars files to use
 }
 
 // DeploymentRunApproval is used for approving/rejecting a plan
