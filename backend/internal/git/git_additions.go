@@ -34,7 +34,6 @@ func listReferences(repoURL string, auth *AuthConfig, refPrefix string) ([]strin
 	// Prepare environment
 	env := os.Environ()
 	env = append(env, "GIT_TERMINAL_PROMPT=0")
-	env = append(env, "GIT_SSH_COMMAND=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null")
 
 	// Run git ls-remote
 	cmd := exec.Command("git", "ls-remote", "--heads", "--tags", url)
@@ -95,7 +94,6 @@ func ListDirectory(repoURL string, ref string, path string, auth *AuthConfig) ([
 	// Prepare environment
 	env := os.Environ()
 	env = append(env, "GIT_TERMINAL_PROMPT=0")
-	env = append(env, "GIT_SSH_COMMAND=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null")
 
 	// Clone repository
 	cmd := exec.Command("git", "clone", "--depth", "1", "--branch", ref, url, tmpDir)
@@ -187,7 +185,6 @@ func GetFileContent(repoURL string, ref string, filePath string, auth *AuthConfi
 	// Prepare environment
 	env := os.Environ()
 	env = append(env, "GIT_TERMINAL_PROMPT=0")
-	env = append(env, "GIT_SSH_COMMAND=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null")
 
 	// Clone the repository
 	cmd := exec.Command("git", "clone", "--depth", "1", "--branch", ref, url, tmpDir)
@@ -224,7 +221,6 @@ func Clone(repoURL, ref, destDir string, auth *AuthConfig) error {
 	// Prepare environment
 	env := os.Environ()
 	env = append(env, "GIT_TERMINAL_PROMPT=0")
-	env = append(env, "GIT_SSH_COMMAND=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null")
 
 	// Clone the repository
 	cmd := exec.Command("git", "clone", "--depth", "1", "--branch", ref, url, destDir)

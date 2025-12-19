@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -68,7 +67,6 @@ func getTagsViaGitClone(repoURL string, auth *AuthConfig) ([]Tag, error) {
 	// Prepare environment and credentials
 	env := os.Environ()
 	env = append(env, "GIT_TERMINAL_PROMPT=0")
-	env = append(env, "GIT_SSH_COMMAND=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null")
 
 	// Inject HTTPS credentials if provided
 	if auth != nil && auth.Username != "" {
@@ -208,7 +206,6 @@ func ValidateGitRepository(repoURL string) error {
 	cmd := exec.Command("git", "ls-remote", "--heads", url)
 	cmd.Env = append(os.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
-		"GIT_SSH_COMMAND=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
 	)
 
 	output, err := cmd.CombinedOutput()
@@ -255,7 +252,6 @@ func GetReadmeWithAuth(repoURL string, ref string, auth *AuthConfig) (string, er
 	// Prepare environment and credentials
 	env := os.Environ()
 	env = append(env, "GIT_TERMINAL_PROMPT=0")
-	env = append(env, "GIT_SSH_COMMAND=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null")
 
 	// Inject HTTPS credentials if provided
 	if auth != nil && auth.Username != "" {
@@ -293,29 +289,6 @@ func GetReadmeWithAuth(repoURL string, ref string, auth *AuthConfig) (string, er
 	return "", fmt.Errorf("README not found in repository")
 }
 
-// setupSSHKey creates a temporary SSH key file and returns the directory path and cleanup function
-func setupSSHKey(privateKey string) (string, func(), error) {
-	// Create temporary directory for SSH key
-	sshDir, err := os.MkdirTemp("", "git-ssh-*")
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to create SSH dir: %w", err)
-	}
-
-	cleanup := func() {
-		os.RemoveAll(sshDir)
-	}
-
-	// Write private key to file
-	keyPath := filepath.Join(sshDir, "id_rsa")
-	err = os.WriteFile(keyPath, []byte(privateKey), 0600)
-	if err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("failed to write SSH key: %w", err)
-	}
-
-	return sshDir, cleanup, nil
-}
-
 // injectHTTPSCredentials injects username and password into an HTTPS URL
 func injectHTTPSCredentials(repoURL, username, password string) string {
 	// Parse the URL
@@ -335,4 +308,3 @@ func injectHTTPSCredentials(repoURL, username, password string) string {
 
 	return parsedURL.String()
 }
-

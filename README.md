@@ -1,343 +1,332 @@
-# Terraform Private Registry
+# Private Terraform Registry Platform
 
-A self-hosted private registry for Terraform that supports both modules and providers. Host your own Terraform registry compatible with the official protocol, featuring a web interface for management and automatic synchronization from Git repositories.
+A self-hosted, private Terraform/OpenTofu registry and deployment platform that allows you to manage your own Terraform modules, providers, and Infrastructure as Code (IaC) deployments.
 
-## What does this application do?
+## Features
 
-This platform allows you to:
-
-- **Host private Terraform modules**: Publish and version your internal Terraform modules
-- **Host private Terraform providers**: Distribute custom providers with automatic GPG signing
-- **Git synchronization**: Automatically import versions from Git tags
-- **Visual management**: Modern web interface to manage modules, providers, and versions
-- **Terraform CLI compatible**: Works directly with `terraform init` without modifications
-- **Multi-namespace**: Organize resources by teams or organizations
-- **Version control**: Enable/disable specific versions as needed
+- **Private Module Registry**: Host and version your own Terraform modules with Git-based synchronization
+- **Private Provider Registry**: Mirror and distribute Terraform providers with multi-platform binary support
+- **IaC Deployment Management**: Execute and manage Terraform/OpenTofu deployments directly from the UI
+- **Namespace Management**: Organize modules and providers with namespaces and API key authentication
+- **Git Integration**: Automatic synchronization of modules from Git repositories (public and private)
+- **Web UI**: Modern React-based interface with dark mode support
+- **Deployment Runs**: Plan, review, approve, and apply infrastructure changes with live log streaming
+- **Security**: GPG signature verification, encrypted credentials, and namespace-based access control
 
 ## Architecture
 
-```
-┌─────────────┐      ┌──────────────┐      ┌─────────────┐      ┌─────────────┐
-│  Terraform  │─────▶│   Frontend   │─────▶│   Backend   │─────▶│   Runner    │
-│     CLI     │      │ (React + TS) │      │  (Go + DB)  │      │(TF/OpenTofu)│
-└─────────────┘      └──────────────┘      └─────────────┘      └─────────────┘
-                            │                      │                     │
-                            │                      ▼                     ▼
-                            │              ┌──────────────┐      ┌──────────────┐
-                            └─────────────▶│ Git Repos    │      │ Deployments  │
-                                           └──────────────┘      └──────────────┘
-```
+The platform consists of four main components:
 
-- **Frontend**: React + TypeScript + Vite + Tailwind CSS
-- **Backend**: REST API in Go with SQLite database
-- **Runner**: Isolated executable that runs Terraform/OpenTofu commands
-- **Synchronization**: Automatic Git repo cloning to extract tags/versions
-- **GPG Signing**: Automatic generation and signing of provider binaries
+### 1. **Backend** (`/backend`)
+- Go-based REST API server using Gin framework
+- Manages modules, providers, namespaces, and deployments
+- PostgreSQL database for metadata storage
+- Git operations and GPG signature verification
+- Handles authentication and encryption
 
-### Runner Architecture
+### 2. **Frontend** (`/frontend`)
+- React + TypeScript single-page application
+- Vite for fast development and optimized builds
+- Tailwind CSS for styling
+- Real-time polling for deployment status updates
 
-The platform uses a separated runner architecture for executing Terraform/OpenTofu deployments:
+### 3. **Runner** (`/runner`)
+- Go-based service that executes Terraform/OpenTofu commands
+- Isolated execution environment for deployment runs
+- Supports both Terraform and OpenTofu
+- Includes AWS CLI and Azure CLI for cloud provider integrations
 
-- **Isolation**: The runner is a separate executable that handles all IaC tool execution
-- **Security**: Backend and runner communicate via stdin/stdout JSON protocol
-- **Flexibility**: Easy to scale runners independently or run them in separate containers
-- **Tool Support**: Supports both Terraform and OpenTofu seamlessly
+### 4. **Database**
+- PostgreSQL 17 for persistent data storage
+- Stores modules, providers, namespaces, API keys, and deployment metadata
 
-See [runner/README.md](runner/README.md) for more details on the runner component.
-
-## Quick Start
+## Quick Start with Docker Compose
 
 ### Prerequisites
 
-- Docker and Docker Compose
-- Git repositories with your Terraform modules/providers
+- Docker and Docker Compose installed
+- At least 2GB of free disk space
+- Ports 3000 (frontend), 9080 (backend), and 8080 (runner) available
 
-### Installation
+### Installation Steps
 
-1. Clone the repository:
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd private-tf-platform
+   ```
+
+2. **Create environment configuration**
+   ```bash
+   cp .env.example .env
+   ```
+
+3. **Generate secure keys** (Important for production!)
+   ```bashlocalhost:3000/deployments/b9f3f535-2aaa-48ff-855c-7b9a1548b058?branch=main
+   # Generate encryption key
+   openssl rand -base64 32
+   
+   # Generate database password
+   openssl rand -base64 24
+   ```
+   
+   Update `.env` file with these values:
+   ```bash
+   ENCRYPTION_KEY=<generated-key-here>
+   POSTGRES_PASSWORD=<generated-password-here>
+   ```
+
+4. **Start the platform**
+   ```bash
+   docker compose up -d
+   ```
+
+5. **Access the platform**
+   - Frontend UI: http://localhost:3000
+   - Backend API: http://localhost:9080
+   - API Documentation: http://localhost:9080/swagger/index.html (if enabled)
+
+6. **Configure your Terraform CLI**
+   
+   Add to your `~/.terraformrc` (Linux/macOS) or `%APPDATA%/terraform.rc` (Windows):
+   ```hcl
+   host "registry.local:9080" {
+     services = {
+       "providers.v1" = "http://registry.local:9080/v1/providers/"
+       "modules.v1"   = "http://registry.local:9080/v1/modules/"
+     }
+   }
+   
+   credentials "registry.local:9080" {
+     token = "your-api-key-here"
+   }
+   ```
+   
+   Add to your `/etc/hosts` (Linux/macOS) or `C:\Windows\System32\drivers\etc\hosts` (Windows):
+   ```
+   127.0.0.1 registry.local
+   ```
+
+### Stopping the Platform
+
 ```bash
-git clone https://github.com/asensionacher/private-tf-platform.git
-cd private-tf-platform
+# Stop all services
+docker compose down
+
+# Stop and remove all data (WARNING: This deletes all data!)
+docker compose down -v
 ```
 
-2. Start the services:
-```bash
-docker compose up -d
+## Manual Setup (Development)
+
+Each component can be run independently for development purposes. See individual README files:
+
+- [Backend Manual Setup](./backend/README.md)
+- [Frontend Manual Setup](./frontend/README.md)
+- [Runner Manual Setup](./runner/README.md)
+
+## Project Structure
+
 ```
-
-3. Access the web interface at `http://localhost:3000`
-
-The backend API will be available at `http://localhost:9080`
+.
+├── backend/           # Go backend API service
+│   ├── internal/      # Internal packages
+│   │   ├── api/       # HTTP handlers
+│   │   ├── build/     # Terraform build logic
+│   │   ├── crypto/    # Encryption utilities
+│   │   ├── database/  # Database connection
+│   │   ├── git/       # Git operations
+│   │   ├── gpg/       # GPG verification
+│   │   ├── models/    # Data models
+│   │   └── registry/  # Registry logic
+│   ├── Dockerfile
+│   └── main.go
+│
+├── frontend/          # React TypeScript frontend
+│   ├── src/
+│   │   ├── api/       # API client
+│   │   ├── components/# React components
+│   │   ├── context/   # React context
+│   │   ├── pages/     # Page components
+│   │   └── types/     # TypeScript types
+│   ├── Dockerfile
+│   └── package.json
+│
+├── runner/            # Terraform/OpenTofu runner service
+│   ├── Dockerfile
+│   └── main.go
+│
+├── scripts/           # Utility scripts
+│   ├── setup-env.sh   # Automated environment setup
+│   └── validate-env.sh# Environment validation
+│
+├── docs/              # Documentation
+│   └── SECURITY.md    # Security guidelines
+│
+├── docker-compose.yml # Docker Compose configuration
+├── .env.example       # Environment template
+└── README.md          # This file
+```
 
 ## Configuration
 
 ### Environment Variables
 
-#### Backend (API Server)
-- `PORT`: API server port (default: 9080)
-- `BASE_URL`: Base URL for the registry (default: http://localhost:9080)
-- `DB_PATH`: SQLite database path (default: /app/data/registry.db)
-- `GPG_HOME`: GPG home directory for signing keys (default: /app/data/gpg)
-- `ENCRYPTION_KEY`: **Required for production** - 32-byte encryption key for securing credentials (SSH keys, passwords, tokens)
+Key configuration options in `.env`:
 
-#### Frontend
-- `VITE_API_URL`: Backend API URL (default: http://localhost:9080)
+- `ENCRYPTION_KEY`: Encryption key for sensitive data (min 32 characters)
+- `POSTGRES_PASSWORD`: PostgreSQL password
+- `FRONTEND_HOST`: Frontend hostname (default: localhost)
+- `BACKEND_HOST`: Backend hostname (default: localhost)
+- `REGISTRY_HOST`: Registry hostname for Terraform (default: registry.local)
+- `FRONTEND_PORT`: Frontend port (default: 3000)
+- `BACKEND_PORT`: Backend port (default: 9080)
+- `RUNNER_PORT`: Runner port (default: 8080)
 
-### Docker Compose
+See [.env.example](./.env.example) for full documentation.
 
-Edit `docker-compose.yml` to customize ports and volumes:
+### Hostnames
 
-```yaml
-services:
-  backend:
-    ports:
-      - "9080:9080"  # Change host port as needed
-    volumes:
-      - ./data:/app/data  # Persistent storage
-    environment:
-      - BASE_URL=https://registry.example.com  # Your domain
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY}  # Set in .env file
-```
+The platform uses `registry.local` as the default registry hostname. This is required because:
+1. Terraform requires a hostname with a dot (`.`) for custom registries
+2. Using `localhost` doesn't work properly with Terraform's service discovery
 
-### Security Configuration
-
-**Important**: For production environments, you must set a secure encryption key:
-
-1. Generate a strong encryption key:
-```bash
-openssl rand -base64 32
-```
-
-2. Create a `.env` file in the project root:
-```bash
-cp .env.example .env
-# Edit .env and set ENCRYPTION_KEY to your generated key
-```
-
-3. Restart the containers:
-```bash
-docker compose down && docker compose up -d
-```
-
-The encryption key is used to protect sensitive authentication data (SSH private keys, HTTPS passwords/tokens) stored in the database using AES-256-GCM encryption.
+**Important**: Add `127.0.0.1 registry.local` to your `/etc/hosts` file.
 
 ## Usage
 
-### Using Terraform CLI
+### 1. Create a Namespace
 
-#### Configure Terraform to use your registry
+Namespaces organize your modules and providers:
+1. Navigate to "Namespaces" in the UI
+2. Click "New Namespace"
+3. Enter a name (e.g., `mycompany`)
+4. Create an API key for the namespace
 
-Create or edit `~/.terraformrc`:
+### 2. Add a Terraform Module
 
-```hcl
-host "localhost.localdomain:3000" {
-  services = {
-    "modules.v1"   = "http://localhost.localdomain:3000/v1/modules/",
-    "providers.v1" = "http://localhost.localdomain:3000/v1/providers/"
-  }
-}
-```
+1. Navigate to "Modules"
+2. Click "New Module"
+3. Select namespace
+4. Enter module name and Git URL
+5. For private repositories, provide Git credentials
+6. Click "Sync Tags" to import versions
 
-For production, replace `localhost.localdomain:3000` with your domain.
+### 3. Add a Terraform Provider
 
-#### Using Modules
+1. Navigate to "Providers"
+2. Click "New Provider"
+3. Select namespace
+4. Enter provider name and Git URL
+5. Upload platform binaries for each version
+6. Enable versions to make them available
 
-```hcl
-module "example" {
-  source  = "localhost.localdomain:3000/namespace/name/provider"
-  version = "1.0.0"
-}
-```
+### 4. Create a Deployment
 
-#### Using Providers
+1. Navigate to "Deployments"
+2. Click "New Deployment"
+3. Enter name and Git repository URL
+4. Browse the repository and select a directory
+5. Click "Deploy" to create a deployment run
+6. Configure Terraform/OpenTofu options
+7. Review plan output and approve to apply
 
-```hcl
-terraform {
-  required_providers {
-    azurerm = {
-      source  = "localhost.localdomain:3000/default/azurerm"
-      version = "4.55.0"
-    }
-  }
-}
-```
+## Deployment Workflow
 
-### Managing Modules
-
-1. **Add a Module**: 
-   - Navigate to Modules page
-   - Click "Add Module"
-   - Provide namespace, name, provider, and Git source URL
-   
-2. **Sync Versions**:
-   - Open module details
-   - Click "Sync Tags" to fetch versions from Git repository
-   - Enable the versions you want to publish
-
-3. **API Key**: Required for creating/updating modules
-   - Navigate to Namespaces → Select namespace → Generate API key
-   - Use the key in `X-API-Key` header for API requests
-
-### Managing Providers
-
-1. **Add a Provider**:
-   - Navigate to Providers page
-   - Click "Add Provider"
-   - Provide namespace, name, and Git source URL
-
-2. **Sync Versions**:
-   - Open provider details
-   - Click "Sync Tags" to fetch versions from Git repository
-   - Add platform binaries for each version
-
-3. **Platform Binaries**:
-   - Each version needs binaries for target platforms (linux_amd64, darwin_arm64, etc.)
-   - Binaries are automatically signed with GPG
-
-## API Endpoints
-
-### Service Discovery
-- `GET /.well-known/terraform.json` - Service discovery endpoint
-
-### Modules
-- `GET /v1/modules/:namespace/:name/:provider/versions` - List module versions
-- `GET /v1/modules/:namespace/:name/:provider/:version/download` - Download module
-
-### Providers  
-- `GET /v1/providers/:namespace/:name/versions` - List provider versions
-- `GET /v1/providers/:namespace/:name/:version/download/:os/:arch` - Download provider
-
-### Management API (requires API key)
-- `GET /api/modules` - List all modules
-- `POST /api/modules` - Create module
-- `POST /api/modules/:id/sync-tags` - Sync versions from Git
-- `GET /api/providers` - List all providers
-- `POST /api/providers` - Create provider
-- `POST /api/providers/:id/sync-tags` - Sync versions from Git
-
-## Architecture
-
-- **Backend**: Go-based API server with SQLite database
-- **Frontend**: React + TypeScript with Vite
-- **Web Server**: Nginx serving the frontend
-- **Database**: SQLite for module/provider metadata
-- **Storage**: File-based storage for GPG keys and data
-
-## Development
-
-### Backend Development
-```bash
-cd backend
-go run .
-```
-
-### Frontend Development
-```bash
-cd frontend
-pnpm install
-pnpm dev
-```
-
-### Building
-```bash
-# Build both services
-docker compose build
-
-# Build specific service
-docker compose build backend
-docker compose build frontend
-```
-
-## Data Persistence
-
-All data is stored in the `./data` directory (mounted as volume):
-- `registry.db` - SQLite database
-- `gpg/` - GPG keys for signing
-
-Make sure to backup this directory regularly.
+1. **Initialize**: Runner clones repository and runs `terraform init`
+2. **Plan**: Runner executes `terraform plan` and shows output
+3. **Approve**: Review changes and approve in the UI
+4. **Apply**: Runner executes `terraform apply` with live log streaming
+5. **Complete**: View outputs and final state
 
 ## Security Considerations
 
-1. **API Keys**: Store API keys securely and rotate them regularly
-2. **GPG Keys**: Automatically generated and stored in the GPG home directory
-3. **HTTPS**: Use HTTPS in production with a reverse proxy (nginx, traefik, etc.)
-4. **Network**: Consider restricting network access to the registry
-5. **Authentication**: API keys are required for write operations
+- **Change default credentials**: Always update `ENCRYPTION_KEY` and `POSTGRES_PASSWORD`
+- **Use strong encryption keys**: Generate with `openssl rand -base64 32`
+- **Secure Git credentials**: Credentials are encrypted at rest
+- **API key management**: Create separate keys for different namespaces
+- **Network security**: Use reverse proxy with SSL/TLS in production
+- **Database access**: Don't expose PostgreSQL port externally in production
 
-## Production Deployment
-
-For production deployments:
-
-1. Use a reverse proxy (nginx, traefik) with HTTPS
-2. Configure proper BASE_URL in environment variables
-3. Set up regular backups of the data directory
-4. Configure resource limits in docker-compose.yml
-5. Monitor logs and disk usage
-6. Consider using external database for high availability
-
-Example nginx configuration:
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name registry.example.com;
-
-    ssl_certificate /path/to/cert.pem;
-    ssl_certificate_key /path/to/key.pem;
-
-    location / {
-        proxy_pass http://localhost:3000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-
-    location /api/ {
-        proxy_pass http://localhost:9080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
-```
+See [docs/SECURITY.md](./docs/SECURITY.md) for detailed security guidelines.
 
 ## Troubleshooting
 
-### Module/Provider not found
-- Verify the source URL is correct
-- Check that versions are synced and enabled
-- Ensure API key is set correctly for private namespaces
+### Common Issues
 
-### GPG signature verification failed
-- Delete the module/provider and re-sync to regenerate signatures
-- Check backend logs for GPG errors
+**1. Cannot access frontend at localhost:3000**
+- Check if port is already in use: `docker ps`
+- Verify containers are running: `docker compose ps`
+- Check logs: `docker compose logs frontend`
 
-### Git clone failures
-- Ensure Git repositories are accessible
-- Check SSH keys if using SSH URLs
-- Verify network connectivity from container
+**2. Terraform can't connect to registry**
+- Verify `/etc/hosts` has `127.0.0.1 registry.local`
+- Check `~/.terraformrc` configuration
+- Ensure backend is running: `docker compose ps backend`
+- Test API: `curl http://registry.local:9080/health`
 
-### Version ordering issues
-- Re-sync tags to update tag dates
-- Versions are sorted by tag date (newest first)
+**3. Git synchronization fails**
+- Check Git credentials are correct
+- Verify repository URL is accessible
+- Check backend logs: `docker compose logs backend`
 
-## Contributing
+**4. Deployment runs fail**
+- Check runner logs: `docker compose logs runner`
+- Verify environment variables are set correctly
+- Ensure runner can access the registry
 
-Contributions are welcome! Please feel free to submit issues and pull requests.
+### Viewing Logs
 
-## License
+```bash
+# All services
+docker compose logs -f
 
-MIT License - see [LICENSE](LICENSE) file for details.
+# Specific service
+docker compose logs -f backend
+docker compose logs -f frontend
+docker compose logs -f runner
+docker compose logs -f postgres
+```
+
+### Resetting Data
+
+```bash
+# Stop services and remove all data
+docker compose down -v
+
+# Remove only specific volumes
+docker volume rm private-tf-platform_postgres-data
+docker volume rm private-tf-platform_registry-data
+docker volume rm private-tf-platform_deployment-workdir
+```
+
+## Updating
+
+```bash
+# Pull latest changes
+git pull
+
+# Rebuild and restart services
+docker compose down
+docker compose up -d --build
+```
+
+## Development
+
+For development setup and contribution guidelines, see individual component READMEs:
+- [Backend Development](./backend/README.md)
+- [Frontend Development](./frontend/README.md)
+- [Runner Development](./runner/README.md)
 
 ## Support
 
-For issues and questions:
-- Open an issue on GitHub
-- Check existing issues for solutions
-- Review the troubleshooting section
+For issues, questions, or contributions:
+- Check existing issues in the repository
+- Check component-specific README files
 
-## Acknowledgments
+## License
 
-Built with:
-- Go
-- React + TypeScript
-- SQLite
-- Docker
-- Terraform Protocol
+See [LICENSE](./LICENSE) file for details.
+
+
+_This project was fully deployed using Cloude Sonnet 4.5_

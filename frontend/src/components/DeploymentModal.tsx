@@ -14,6 +14,8 @@ export default function DeploymentModal({ deploymentId, path, gitRef, onClose, o
     const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([]);
     const [availableTfvars, setAvailableTfvars] = useState<string[]>([]);
     const [selectedTfvars, setSelectedTfvars] = useState<string[]>([]);
+    const [initFlags, setInitFlags] = useState<string>('');
+    const [planFlags, setPlanFlags] = useState<string>('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -29,6 +31,25 @@ export default function DeploymentModal({ deploymentId, path, gitRef, onClose, o
         };
         loadTfvars();
     }, [deploymentId, gitRef, path]);
+
+    // Load last deployment configuration from localStorage
+    useEffect(() => {
+        const storageKey = `lastDeployment_${deploymentId}`;
+        const savedConfig = localStorage.getItem(storageKey);
+        if (savedConfig) {
+            try {
+                const config = JSON.parse(savedConfig);
+                if (config.tool) setTool(config.tool);
+                // Load env vars with values (values are hidden but reused)
+                if (config.envVars) setEnvVars(config.envVars);
+                if (config.selectedTfvars) setSelectedTfvars(config.selectedTfvars);
+                if (config.initFlags) setInitFlags(config.initFlags);
+                if (config.planFlags) setPlanFlags(config.planFlags);
+            } catch (err) {
+                console.error('Failed to load saved configuration:', err);
+            }
+        }
+    }, [deploymentId]);
 
     const handleAddEnvVar = () => {
         setEnvVars([...envVars, { key: '', value: '' }]);
@@ -66,12 +87,24 @@ export default function DeploymentModal({ deploymentId, path, gitRef, onClose, o
                 }
             });
 
+            // Save configuration to localStorage (including values for reuse)
+            const storageKey = `lastDeployment_${deploymentId}`;
+            localStorage.setItem(storageKey, JSON.stringify({
+                tool,
+                envVars, // Store full key-value pairs for reuse
+                selectedTfvars,
+                initFlags,
+                planFlags,
+            }));
+
             await deploymentsApi.createRun(deploymentId, {
                 path,
                 ref: gitRef,
                 tool,
                 env_vars: Object.keys(envVarsObj).length > 0 ? envVarsObj : undefined,
-                tfvars_files: selectedTfvars.length > 0 ? selectedTfvars : undefined
+                tfvars_files: selectedTfvars.length > 0 ? selectedTfvars : undefined,
+                init_flags: initFlags.trim() || undefined,
+                plan_flags: planFlags.trim() || undefined,
             });
 
             onSuccess();
@@ -162,36 +195,41 @@ export default function DeploymentModal({ deploymentId, path, gitRef, onClose, o
                                 No environment variables added
                             </p>
                         ) : (
-                            <div className="space-y-2">
-                                {envVars.map((envVar, index) => (
-                                    <div key={index} className="flex items-center gap-2">
-                                        <input
-                                            type="text"
-                                            placeholder="KEY"
-                                            value={envVar.key}
-                                            onChange={(e) => handleEnvVarChange(index, 'key', e.target.value)}
-                                            className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
-                                        />
-                                        <span className="text-gray-500">=</span>
-                                        <input
-                                            type="text"
-                                            placeholder="value"
-                                            value={envVar.value}
-                                            onChange={(e) => handleEnvVarChange(index, 'value', e.target.value)}
-                                            className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => handleRemoveEnvVar(index)}
-                                            className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
-                                        >
-                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                            </svg>
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
+                            <>
+                                <div className="space-y-2">
+                                    {envVars.map((envVar, index) => (
+                                        <div key={index} className="flex items-center gap-2">
+                                            <input
+                                                type="text"
+                                                placeholder="KEY"
+                                                value={envVar.key}
+                                                onChange={(e) => handleEnvVarChange(index, 'key', e.target.value)}
+                                                className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+                                            />
+                                            <span className="text-gray-500">=</span>
+                                            <input
+                                                type="password"
+                                                placeholder="value"
+                                                value={envVar.value}
+                                                onChange={(e) => handleEnvVarChange(index, 'value', e.target.value)}
+                                                className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => handleRemoveEnvVar(index)}
+                                                className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
+                                            >
+                                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                                    Values are hidden for security but will be reused from last deployment
+                                </p>
+                            </>
                         )}
                     </div>
 
@@ -220,6 +258,40 @@ export default function DeploymentModal({ deploymentId, path, gitRef, onClose, o
                             )}
                         </div>
                     )}
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Custom Init Flags
+                            <span className="text-xs text-gray-500 dark:text-gray-400 font-normal ml-2">(optional)</span>
+                        </label>
+                        <input
+                            type="text"
+                            value={initFlags}
+                            onChange={(e) => setInitFlags(e.target.value)}
+                            placeholder="e.g., -upgrade -reconfigure"
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+                        />
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                            Additional flags for terraform/tofu init command
+                        </p>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Custom Plan Flags
+                            <span className="text-xs text-gray-500 dark:text-gray-400 font-normal ml-2">(optional)</span>
+                        </label>
+                        <input
+                            type="text"
+                            value={planFlags}
+                            onChange={(e) => setPlanFlags(e.target.value)}
+                            placeholder="e.g., -lock=false -parallelism=10"
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+                        />
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                            Additional flags for terraform/tofu plan command
+                        </p>
+                    </div>
 
                     <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">"
                         <button

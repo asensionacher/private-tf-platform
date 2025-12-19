@@ -246,7 +246,7 @@ export default function ProvidersPage() {
                     required
                   />
                   <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    HTTPS or SSH Git URL (e.g., https://github.com/org/repo.git or git@github.com:org/repo.git)
+                    HTTPS Git URL (e.g., https://github.com/org/repo.git)
                   </p>
                 </div>
 

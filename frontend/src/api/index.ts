@@ -149,7 +149,7 @@ export const deploymentsApi = {
     const params = path ? { ref, path } : { ref };
     return api.get<{ tfvars_files: string[] }>(`/deployments/${id}/tfvars`, { params }).then(res => res.data);
   },
-  createRun: (id: string, data: { path: string, ref: string, tool: 'terraform' | 'tofu', env_vars?: Record<string, string>, tfvars_files?: string[] }) =>
+  createRun: (id: string, data: { path: string, ref: string, tool: 'terraform' | 'tofu', env_vars?: Record<string, string>, tfvars_files?: string[], init_flags?: string, plan_flags?: string }) =>
     api.post<DeploymentRun>(`/deployments/${id}/runs`, { deployment_id: id, ...data }).then(res => res.data),
   getRuns: (id: string, path?: string) => {
     const params = path ? { path } : {};
@@ -161,6 +161,8 @@ export const deploymentsApi = {
     api.post<DeploymentRun>(`/deployments/${id}/runs/${runId}/approve`, data).then(res => res.data),
   cancelRun: (id: string, runId: string) =>
     api.post<DeploymentRun>(`/deployments/${id}/runs/${runId}/cancel`).then(res => res.data),
+  deleteRun: (id: string, runId: string) =>
+    api.delete(`/deployments/${id}/runs/${runId}`).then(res => res.data),
   getStatus: (id: string, path?: string) => {
     const params = path ? { path } : {};
     return api.get<DirectoryStatus>(`/deployments/${id}/status`, { params }).then(res => res.data);

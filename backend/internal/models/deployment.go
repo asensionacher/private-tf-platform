@@ -63,6 +63,8 @@ type DeploymentRun struct {
 	Tool         string            `json:"tool"`         // "tofu" or "terraform"
 	EnvVars      map[string]string `json:"env_vars"`     // Environment variables
 	TfvarsFiles  []string          `json:"tfvars_files"` // List of .tfvars files to use
+	InitFlags    string            `json:"init_flags"`   // Additional flags for init command
+	PlanFlags    string            `json:"plan_flags"`   // Additional flags for plan command
 	Status       string            `json:"status"`       // "pending", "initializing", "planning", "awaiting_approval", "applying", "success", "failed", "cancelled"
 	InitLog      string            `json:"init_log"`     // Init command output
 	PlanLog      string            `json:"plan_log"`     // Plan command output
@@ -86,6 +88,8 @@ type DeploymentRunCreate struct {
 	Tool         string            `json:"tool" binding:"required"` // "tofu" or "terraform"
 	EnvVars      map[string]string `json:"env_vars,omitempty"`      // Environment variables
 	TfvarsFiles  []string          `json:"tfvars_files,omitempty"`  // List of .tfvars files to use
+	InitFlags    string            `json:"init_flags,omitempty"`    // Additional flags for init command
+	PlanFlags    string            `json:"plan_flags,omitempty"`    // Additional flags for plan command
 }
 
 // DeploymentRunApproval is used for approving/rejecting a plan

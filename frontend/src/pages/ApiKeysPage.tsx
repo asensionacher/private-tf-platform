@@ -1,13 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Settings, Terminal, Key, Plus, Trash2, Copy, Check } from 'lucide-react';
+import { Key, Plus, Trash2, Copy, Check } from 'lucide-react';
 import axios from 'axios';
 import type { APIKey } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
-export default function SettingsPage() {
-  const [registryUrl, setRegistryUrl] = useState<string>('');
-  const [loading, setLoading] = useState(true);
+export default function ApiKeysPage() {
   const [apiKeys, setApiKeys] = useState<APIKey[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newKeyName, setNewKeyName] = useState('');
@@ -16,24 +14,6 @@ export default function SettingsPage() {
   const [loadingKeys, setLoadingKeys] = useState(false);
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        // Fetch registry URL
-        const registryResponse = await axios.get(`${API_BASE_URL}/.well-known/terraform.json`);
-        const modulesUrl = registryResponse.data['modules.v1'];
-        if (modulesUrl) {
-          const url = new URL(modulesUrl);
-          setRegistryUrl(`${url.protocol}//${url.host}`);
-        }
-      } catch (error) {
-        console.error('Failed to fetch data:', error);
-        setRegistryUrl(window.location.origin);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchData();
     fetchApiKeys();
   }, []);
 
@@ -93,71 +73,13 @@ export default function SettingsPage() {
     setTimeout(() => setCopiedKey(false), 2000);
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
-      </div>
-    );
-  }
-
-  const registryHost = registryUrl ? new URL(registryUrl).host : 'registry.local:9080';
-
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Settings</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">API Keys</h1>
         <p className="text-sm text-gray-500 dark:text-gray-400">
-          Registry information and Terraform CLI configuration
+          Manage API keys for Terraform CLI authentication
         </p>
-      </div>
-
-      <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-6">
-        <div className="flex items-center mb-4">
-          <Settings className="h-5 w-5 text-gray-400 mr-2" />
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Registry Information</h2>
-        </div>
-        <dl className="space-y-3">
-          <div>
-            <dt className="text-sm text-gray-500 dark:text-gray-400">Service Discovery</dt>
-            <dd className="text-sm font-mono text-gray-900 dark:text-white">
-              {registryUrl}/.well-known/terraform.json
-            </dd>
-          </div>
-          <div>
-            <dt className="text-sm text-gray-500 dark:text-gray-400">Modules API</dt>
-            <dd className="text-sm font-mono text-gray-900 dark:text-white">
-              {registryUrl}/v1/modules/
-            </dd>
-          </div>
-          <div>
-            <dt className="text-sm text-gray-500 dark:text-gray-400">Providers API</dt>
-            <dd className="text-sm font-mono text-gray-900 dark:text-white">
-              {registryUrl}/v1/providers/
-            </dd>
-          </div>
-        </dl>
-      </div>
-
-      <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
-        <div className="flex items-center mb-2">
-          <Terminal className="h-4 w-4 text-blue-600 dark:text-blue-400 mr-2" />
-          <h3 className="text-sm font-medium text-blue-800 dark:text-blue-200">
-            Terraform CLI Configuration
-          </h3>
-        </div>
-        <p className="text-xs text-blue-700 dark:text-blue-300 mb-2">
-          To use private namespaces with Terraform CLI, create an API key from the namespace detail page,
-          then add this to your ~/.terraformrc:
-        </p>
-        <pre className="text-xs text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/40 p-3 rounded">
-          {`credentials "${registryHost}" {
-  token = "YOUR_API_KEY_HERE"
-}
-
-# For local development, add to /etc/hosts:
-# 127.0.0.1 registry.local`}
-        </pre>
       </div>
 
       <div className="bg-amber-50 dark:bg-amber-900/20 rounded-lg p-4">
@@ -172,7 +94,6 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      {/* API Keys Management */}
       <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-6">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center">

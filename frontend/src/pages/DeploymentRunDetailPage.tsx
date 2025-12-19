@@ -1,19 +1,24 @@
-import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useState, useEffect, useRef } from 'react';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { deploymentsApi } from '../api';
 import { DeploymentRun } from '../types';
 import AnsiOutput from '../components/AnsiOutput';
 
 export default function DeploymentRunDetailPage() {
     const { id, runId } = useParams<{ id: string; runId: string }>();
+    const navigate = useNavigate();
     const [run, setRun] = useState<DeploymentRun | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [approving, setApproving] = useState(false);
     const [cancelling, setCancelling] = useState(false);
+    const [deleting, setDeleting] = useState(false);
+    const initLogRef = useRef<HTMLDivElement>(null);
+    const planLogRef = useRef<HTMLDivElement>(null);
+    const applyLogRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        loadRun();
+        loadRun(true); // Show loading spinner on first load
     }, [id, runId]);
 
     // Auto-refresh polling when run is active
@@ -24,24 +29,41 @@ export default function DeploymentRunDetailPage() {
         }
 
         const interval = setInterval(() => {
-            loadRun();
-        }, 3000);
+            loadRun(false); // Don't show loading spinner on auto-refresh
+        }, 2000); // Poll every 2 seconds for live updates
 
         return () => clearInterval(interval);
     }, [run?.status, id, runId]);
 
-    const loadRun = async () => {
+    // Auto-scroll to bottom of active log section
+    useEffect(() => {
+        if (!run) return;
+
+        if (run.status === 'initializing' && initLogRef.current) {
+            initLogRef.current.scrollTop = initLogRef.current.scrollHeight;
+        } else if (run.status === 'planning' && planLogRef.current) {
+            planLogRef.current.scrollTop = planLogRef.current.scrollHeight;
+        } else if (run.status === 'applying' && applyLogRef.current) {
+            applyLogRef.current.scrollTop = applyLogRef.current.scrollHeight;
+        }
+    }, [run?.init_log, run?.plan_log, run?.apply_log, run?.status]);
+
+    const loadRun = async (showLoading = true) => {
         if (!id || !runId) return;
 
         try {
-            setLoading(true);
+            if (showLoading) {
+                setLoading(true);
+            }
             const data = await deploymentsApi.getRun(id, runId);
             setRun(data);
             setError(null);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to load run');
         } finally {
-            setLoading(false);
+            if (showLoading) {
+                setLoading(false);
+            }
         }
     };
 
@@ -104,16 +126,37 @@ export default function DeploymentRunDetailPage() {
         }
     };
 
+    const handleDelete = async () => {
+        if (!id || !runId) return;
+
+        if (!confirm('Are you sure you want to delete this deployment run? This action cannot be undone.')) {
+            return;
+        }
+
+        try {
+            setDeleting(true);
+            await deploymentsApi.deleteRun(id, runId);
+            navigate(`/deployments/${id}/runs`);
+        } catch (err: any) {
+            console.error('Delete error:', err);
+            const errorMsg = err.response?.data?.error || err.message || 'Failed to delete run';
+            setError(`Delete failed: ${errorMsg}`);
+        } finally {
+            setDeleting(false);
+        }
+    };
+
     const getStatusColor = (status: string) => {
         switch (status) {
             case 'success':
                 return 'bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300';
+            case 'pending':
             case 'initializing':
             case 'planning':
             case 'applying':
                 return 'bg-yellow-100 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-300';
             case 'awaiting_approval':
-                return 'bg-orange-100 dark:bg-orange-900/20 text-orange-800 dark:text-orange-300';
+                return 'bg-purple-100 dark:bg-purple-900/20 text-purple-800 dark:text-purple-300';
             case 'failed':
                 return 'bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-300';
             case 'cancelled':
@@ -144,6 +187,7 @@ export default function DeploymentRunDetailPage() {
     if (!run) return null;
 
     const canCancel = ['pending', 'initializing', 'planning', 'awaiting_approval', 'applying'].includes(run.status);
+    const canDelete = !canCancel; // Can only delete completed/failed/cancelled runs
 
     return (
         <div className="max-w-7xl mx-auto space-y-6">
@@ -171,6 +215,18 @@ export default function DeploymentRunDetailPage() {
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                             </svg>
                             {cancelling ? 'Cancelling...' : 'Stop Run'}
+                        </button>
+                    )}
+                    {canDelete && (
+                        <button
+                            onClick={handleDelete}
+                            disabled={deleting}
+                            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                        >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                            {deleting ? 'Deleting...' : 'Delete Run'}
                         </button>
                     )}
                     <Link
@@ -212,10 +268,10 @@ export default function DeploymentRunDetailPage() {
                     <div className="mt-4">
                         <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">Environment Variables</p>
                         <div className="bg-gray-50 dark:bg-gray-900 rounded p-3 font-mono text-sm">
-                            {Object.entries(run.env_vars).map(([key, value]) => (
+                            {Object.keys(run.env_vars).map((key) => (
                                 <div key={key} className="text-gray-900 dark:text-white">
                                     <span className="text-blue-600 dark:text-blue-400">{key}</span>=
-                                    <span className="text-green-600 dark:text-green-400">{value}</span>
+                                    <span className="text-gray-500 dark:text-gray-400">********</span>
                                 </div>
                             ))}
                         </div>
@@ -233,6 +289,24 @@ export default function DeploymentRunDetailPage() {
                                     </span>
                                 ))}
                             </div>
+                        </div>
+                    </div>
+                )}
+
+                {run.init_flags && (
+                    <div className="mt-4">
+                        <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">Custom Init Flags</p>
+                        <div className="bg-gray-50 dark:bg-gray-900 rounded p-3 font-mono text-sm text-gray-900 dark:text-white">
+                            {run.init_flags}
+                        </div>
+                    </div>
+                )}
+
+                {run.plan_flags && (
+                    <div className="mt-4">
+                        <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">Custom Plan Flags</p>
+                        <div className="bg-gray-50 dark:bg-gray-900 rounded p-3 font-mono text-sm text-gray-900 dark:text-white">
+                            {run.plan_flags}
                         </div>
                     </div>
                 )}
@@ -259,11 +333,11 @@ export default function DeploymentRunDetailPage() {
 
             {/* Approval Section - Always shown when awaiting approval */}
             {run.status === 'awaiting_approval' && (
-                <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg p-6">
-                    <h3 className="text-lg font-semibold text-orange-900 dark:text-orange-300 mb-4">
+                <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-6">
+                    <h3 className="text-lg font-semibold text-purple-900 dark:text-purple-300 mb-4">
                         Plan Awaiting Approval
                     </h3>
-                    <p className="text-orange-700 dark:text-orange-400 mb-4">
+                    <p className="text-purple-700 dark:text-purple-400 mb-4">
                         Review the plan output below and approve or reject this deployment.
                     </p>
                     <div className="flex gap-3">
@@ -292,69 +366,118 @@ export default function DeploymentRunDetailPage() {
             )}
 
             {/* Init Log */}
-            {run.init_log && (
+            {(run.init_log || ['initializing', 'planning', 'awaiting_approval', 'applying', 'success', 'failed', 'cancelled'].includes(run.status)) && (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
                     <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between">
-                        <h3 className="font-semibold text-gray-900 dark:text-white font-mono">{run.tool} init</h3>
-                        <button
-                            onClick={() => downloadLog(run.init_log, `${run.tool}-init-${runId}.log`)}
-                            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors flex items-center gap-1 text-sm"
-                            title="Download log"
-                        >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                            </svg>
-                            Download
-                        </button>
+                        <h3 className="font-semibold text-gray-900 dark:text-white font-mono">
+                            {run.tool} init{run.init_flags ? ` ${run.init_flags}` : ''}
+                            {run.status === 'initializing' && (
+                                <span className="ml-2 text-yellow-600 dark:text-yellow-400 text-sm">Running...</span>
+                            )}
+                        </h3>
+                        {run.init_log && (
+                            <button
+                                onClick={() => downloadLog(run.init_log, `${run.tool}-init-${runId}.log`)}
+                                className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors flex items-center gap-1 text-sm"
+                                title="Download log"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                </svg>
+                                Download
+                            </button>
+                        )}
                     </div>
-                    <div className="p-4 overflow-x-auto max-h-[600px] overflow-y-auto">
-                        <AnsiOutput content={run.init_log} />
+                    <div ref={initLogRef} className="p-4 overflow-x-auto max-h-[600px] overflow-y-auto">
+                        {run.init_log ? (
+                            <AnsiOutput content={run.init_log} />
+                        ) : (
+                            <div className="text-gray-500 dark:text-gray-400 font-mono text-sm">
+                                {run.status === 'initializing' ? (
+                                    <span>Waiting for logs to stream...</span>
+                                ) : (
+                                    <span>Waiting to start...</span>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
 
             {/* Plan Log */}
-            {run.plan_log && (
+            {(run.plan_log || ['planning', 'awaiting_approval', 'applying', 'success', 'failed', 'cancelled'].includes(run.status)) && (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
                     <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between">
                         <h3 className="font-semibold text-gray-900 dark:text-white font-mono">
-                            {run.tool} plan -out=tfplan{run.tfvars_files && run.tfvars_files.length > 0 && run.tfvars_files.map(f => ` -var-file=${f}`).join('')}
+                            {run.tool} plan -out=tfplan{run.tfvars_files && run.tfvars_files.length > 0 && run.tfvars_files.map(f => ` -var-file=${f}`).join('')}{run.plan_flags ? ` ${run.plan_flags}` : ''}
+                            {run.status === 'planning' && (
+                                <span className="ml-2 text-yellow-600 dark:text-yellow-400 text-sm">Running...</span>
+                            )}
                         </h3>
-                        <button
-                            onClick={() => downloadLog(run.plan_log, `${run.tool}-plan-${runId}.log`)}
-                            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors flex items-center gap-1 text-sm"
-                            title="Download log"
-                        >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                            </svg>
-                            Download
-                        </button>
+                        {run.plan_log && (
+                            <button
+                                onClick={() => downloadLog(run.plan_log, `${run.tool}-plan-${runId}.log`)}
+                                className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors flex items-center gap-1 text-sm"
+                                title="Download log"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                </svg>
+                                Download
+                            </button>
+                        )}
                     </div>
-                    <div className="p-4 overflow-x-auto max-h-[600px] overflow-y-auto">
-                        <AnsiOutput content={run.plan_log} />
+                    <div ref={planLogRef} className="p-4 overflow-x-auto max-h-[600px] overflow-y-auto">
+                        {run.plan_log ? (
+                            <AnsiOutput content={run.plan_log} />
+                        ) : (
+                            <div className="text-gray-500 dark:text-gray-400 font-mono text-sm">
+                                {run.status === 'planning' ? (
+                                    <span>Waiting for logs to stream...</span>
+                                ) : (
+                                    <span>Waiting to start...</span>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
 
             {/* Apply Log */}
-            {run.apply_log && (
+            {(run.apply_log || ['applying', 'success', 'failed'].includes(run.status)) && (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
                     <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between">
-                        <h3 className="font-semibold text-gray-900 dark:text-white font-mono">{run.tool} apply tfplan</h3>
-                        <button
-                            onClick={() => downloadLog(run.apply_log, `${run.tool}-apply-${runId}.log`)}
-                            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors flex items-center gap-1 text-sm"
-                            title="Download log"
-                        >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                            </svg>
-                            Download
-                        </button>
+                        <h3 className="font-semibold text-gray-900 dark:text-white font-mono">
+                            {run.tool} apply tfplan
+                            {run.status === 'applying' && (
+                                <span className="ml-2 text-yellow-600 dark:text-yellow-400 text-sm">Running...</span>
+                            )}
+                        </h3>
+                        {run.apply_log && (
+                            <button
+                                onClick={() => downloadLog(run.apply_log, `${run.tool}-apply-${runId}.log`)}
+                                className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors flex items-center gap-1 text-sm"
+                                title="Download log"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                </svg>
+                                Download
+                            </button>
+                        )}
                     </div>
-                    <div className="p-4 overflow-x-auto max-h-[600px] overflow-y-auto">
-                        <AnsiOutput content={run.apply_log} />
+                    <div ref={applyLogRef} className="p-4 overflow-x-auto max-h-[600px] overflow-y-auto">
+                        {run.apply_log ? (
+                            <AnsiOutput content={run.apply_log} />
+                        ) : (
+                            <div className="text-gray-500 dark:text-gray-400 font-mono text-sm">
+                                {run.status === 'applying' ? (
+                                    <span>Waiting for logs to stream...</span>
+                                ) : (
+                                    <span>Waiting to start...</span>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

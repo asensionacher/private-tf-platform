@@ -39,7 +39,7 @@ func TFListProviderVersions(c *gin.Context) {
 	err := database.DB.QueryRow(`
 		SELECT p.id FROM providers p
 		JOIN namespaces n ON p.namespace_id = n.id
-		WHERE n.name = ? AND p.name = ?
+		WHERE n.name = $1 AND p.name = $2
 	`, namespace, name).Scan(&providerID)
 
 	if err != nil {
@@ -53,7 +53,7 @@ func TFListProviderVersions(c *gin.Context) {
 	rows, err := database.DB.Query(`
 		SELECT pv.id, pv.version, pv.protocols
 		FROM provider_versions pv
-		WHERE pv.provider_id = ?
+		WHERE pv.provider_id = $1
 		ORDER BY COALESCE(pv.tag_date, pv.created_at) DESC
 	`, providerID)
 	if err != nil {
@@ -81,7 +81,7 @@ func TFListProviderVersions(c *gin.Context) {
 
 		// Get platforms
 		platformRows, _ := database.DB.Query(`
-			SELECT os, arch FROM provider_platforms WHERE version_id = ?
+			SELECT os, arch FROM provider_platforms WHERE version_id = $1
 		`, versionID)
 		v.Platforms = make([]models.ProviderPlatformDTO, 0)
 		for platformRows.Next() {
@@ -117,8 +117,8 @@ func TFDownloadProvider(c *gin.Context) {
 		JOIN provider_versions pv ON pp.version_id = pv.id
 		JOIN providers p ON pv.provider_id = p.id
 		JOIN namespaces n ON p.namespace_id = n.id
-		WHERE n.name = ? AND p.name = ? AND pv.version = ? AND pp.os = ? AND pp.arch = ?
-		  AND pv.enabled = 1
+		WHERE n.name = $1 AND p.name = $2 AND pv.version = $3 AND pp.os = $4 AND pp.arch = $5
+		  AND pv.enabled = true
 	`, namespace, name, version, osParam, arch).Scan(
 		&pp.Filename, &pp.DownloadURL, &shasumURL, &shasumSigURL,
 		&pp.SHASum, &dbSigningKeys, &protocolsJSON)
@@ -158,7 +158,15 @@ func TFDownloadProvider(c *gin.Context) {
 			host = c.GetHeader("Host")
 		}
 		if host == "" {
-			host = "localhost:9080"
+			backendHost := os.Getenv("BACKEND_HOST")
+			if backendHost == "" {
+				backendHost = "localhost"
+			}
+			backendPort := os.Getenv("PORT")
+			if backendPort == "" {
+				backendPort = "9080"
+			}
+			host = backendHost + ":" + backendPort
 		}
 		scheme := c.GetHeader("X-Forwarded-Proto")
 		if scheme == "" {
@@ -212,7 +220,7 @@ func GetProviderSHASums(c *gin.Context) {
 		JOIN provider_versions pv ON pp.version_id = pv.id
 		JOIN providers p ON pv.provider_id = p.id
 		JOIN namespaces n ON p.namespace_id = n.id
-		WHERE n.name = ? AND p.name = ? AND pv.version = ? AND pv.enabled = 1
+		WHERE n.name = $1 AND p.name = $2 AND pv.version = $3 AND pv.enabled = true
 	`, namespace, name, version)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Version not found"})
@@ -251,7 +259,7 @@ func GetProviderSHASumsSig(c *gin.Context) {
 		JOIN provider_versions pv ON pp.version_id = pv.id
 		JOIN providers p ON pv.provider_id = p.id
 		JOIN namespaces n ON p.namespace_id = n.id
-		WHERE n.name = ? AND p.name = ? AND pv.version = ? AND pv.enabled = 1
+		WHERE n.name = $1 AND p.name = $2 AND pv.version = $3 AND pv.enabled = true
 	`, namespace, name, version)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Version not found"})
@@ -300,7 +308,7 @@ func GetProviders(c *gin.Context) {
 	args := []interface{}{}
 
 	if namespaceFilter != "" {
-		query += " WHERE n.name = ?"
+		query += " WHERE n.name = $1"
 		args = append(args, namespaceFilter)
 	}
 
@@ -337,7 +345,7 @@ func GetProvider(c *gin.Context) {
 			   n.name as namespace
 		FROM providers p
 		JOIN namespaces n ON p.namespace_id = n.id
-		WHERE p.id = ?
+		WHERE p.id = $1
 	`, id).Scan(&p.ID, &p.NamespaceID, &p.Name, &p.Description, &p.Synced,
 		&p.CreatedAt, &p.UpdatedAt, &p.Namespace)
 
@@ -380,13 +388,13 @@ func UploadProviderVersion(c *gin.Context) {
 	err := database.DB.QueryRow(`
 		SELECT p.id FROM providers p
 		JOIN namespaces n ON p.namespace_id = n.id
-		WHERE n.name = ? AND p.name = ?
+		WHERE n.name = $1 AND p.name = $2
 	`, namespace, name).Scan(&providerID)
 
 	if err != nil {
 		// Create provider first
 		var namespaceID string
-		err := database.DB.QueryRow("SELECT id FROM namespaces WHERE name = ?", namespace).Scan(&namespaceID)
+		err := database.DB.QueryRow("SELECT id FROM namespaces WHERE name = $1", namespace).Scan(&namespaceID)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"errors": []string{"Namespace not found"}})
 			return
@@ -396,7 +404,7 @@ func UploadProviderVersion(c *gin.Context) {
 		now := time.Now()
 		_, err = database.DB.Exec(`
 			INSERT INTO providers (id, namespace_id, name, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?)
+			VALUES ($1, $2, $3, $4, $5)
 		`, providerID, namespaceID, name, now, now)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"errors": []string{err.Error()}})
@@ -411,7 +419,7 @@ func UploadProviderVersion(c *gin.Context) {
 
 	_, err = database.DB.Exec(`
 		INSERT INTO provider_versions (id, provider_id, version, protocols, created_at)
-		VALUES (?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5)
 	`, versionID, providerID, version, string(protocolsJSON), now)
 
 	if err != nil {
@@ -434,7 +442,7 @@ func UploadProviderVersion(c *gin.Context) {
 		_, err = database.DB.Exec(`
 			INSERT INTO provider_platforms (id, version_id, os, arch, filename, download_url, 
 				shasums_url, shasums_signature_url, shasum, signing_keys)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		`, platformID, versionID, platform.OS, platform.Arch, platform.Filename,
 			platform.DownloadURL, platform.SHASumsURL, platform.SHASumsSignature,
 			platform.SHASum, signingKeysJSON)
@@ -453,9 +461,9 @@ func GetProviderVersions(c *gin.Context) {
 	id := c.Param("id")
 
 	rows, err := database.DB.Query(`
-		SELECT id, version, protocols, COALESCE(enabled, 1) as enabled, tag_date, created_at
+		SELECT id, version, protocols, COALESCE(enabled, TRUE) as enabled, tag_date, created_at
 		FROM provider_versions
-		WHERE provider_id = ?
+		WHERE provider_id = $1
 		ORDER BY COALESCE(tag_date, created_at) DESC
 	`, id)
 	if err != nil {
@@ -487,7 +495,7 @@ func GetProviderVersions(c *gin.Context) {
 		platformRows, err := database.DB.Query(`
 			SELECT id, os, arch, filename, shasum, download_url
 			FROM provider_platforms
-			WHERE version_id = ?
+			WHERE version_id = $1
 		`, v.ID)
 		if err == nil {
 			v.Platforms = make([]models.ProviderPlatform, 0)
@@ -524,7 +532,7 @@ func DeleteProvider(c *gin.Context) {
 		WHERE id IN (
 			SELECT p.id FROM providers p
 			JOIN namespaces n ON p.namespace_id = n.id
-			WHERE n.name = ? AND p.name = ?
+			WHERE n.name = $1 AND p.name = $2
 		)
 	`, namespace, name)
 	if err != nil {
@@ -559,7 +567,7 @@ func DeleteProviderVersion(c *gin.Context) {
 			SELECT pv.id FROM provider_versions pv
 			JOIN providers p ON pv.provider_id = p.id
 			JOIN namespaces n ON p.namespace_id = n.id
-			WHERE n.name = ? AND p.name = ? AND pv.version = ?
+			WHERE n.name = $1 AND p.name = $2 AND pv.version = $3
 		)
 	`, namespace, name, version)
 	if err != nil {
@@ -578,7 +586,7 @@ func DeleteProviderVersion(c *gin.Context) {
 		SELECT COUNT(*) FROM provider_versions pv
 		JOIN providers p ON pv.provider_id = p.id
 		JOIN namespaces n ON p.namespace_id = n.id
-		WHERE n.name = ? AND p.name = ?
+		WHERE n.name = $1 AND p.name = $2
 	`, namespace, name).Scan(&count)
 
 	if count == 0 {
@@ -587,7 +595,7 @@ func DeleteProviderVersion(c *gin.Context) {
 			WHERE id IN (
 				SELECT p.id FROM providers p
 				JOIN namespaces n ON p.namespace_id = n.id
-				WHERE n.name = ? AND p.name = ?
+				WHERE n.name = $1 AND p.name = $2
 			)
 		`, namespace, name)
 	}
@@ -619,7 +627,7 @@ func CreateProviderFromGit(c *gin.Context) {
 
 	// Validate Git URL format
 	if !isValidGitURL(input.GitURL) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Git URL. Must be a valid git repository URL (https:// or git@)"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Git URL. Must be a valid HTTPS git repository URL (e.g., https://github.com/org/repo.git)"})
 		return
 	}
 
@@ -658,7 +666,7 @@ func CreateProviderFromGit(c *gin.Context) {
 
 	// Verify namespace exists
 	var namespaceName string
-	err := database.DB.QueryRow("SELECT name FROM namespaces WHERE id = ?", input.NamespaceID).Scan(&namespaceName)
+	err := database.DB.QueryRow("SELECT name FROM namespaces WHERE id = $1", input.NamespaceID).Scan(&namespaceName)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Namespace not found"})
 		return
@@ -668,7 +676,7 @@ func CreateProviderFromGit(c *gin.Context) {
 	var existingID string
 	err = database.DB.QueryRow(`
 		SELECT id FROM providers 
-		WHERE namespace_id = ? AND name = ?
+		WHERE namespace_id = $1 AND name = $2
 	`, input.NamespaceID, input.Name).Scan(&existingID)
 
 	if err == nil {
@@ -681,7 +689,7 @@ func CreateProviderFromGit(c *gin.Context) {
 
 	_, err = database.DB.Exec(`
 		INSERT INTO providers (id, namespace_id, name, description, source_url, synced, git_auth_type, git_auth_data, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, FALSE, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, FALSE, $6, $7, $8, $9)
 	`, providerID, input.NamespaceID, input.Name, input.Description, input.GitURL, sql.NullString{String: "https", Valid: input.IsPrivate && input.GitUsername != ""}, authData, now, now)
 
 	if err != nil {
@@ -717,7 +725,7 @@ func DeleteProviderByID(c *gin.Context) {
 	// First delete all platforms for all versions
 	_, err := database.DB.Exec(`
 		DELETE FROM provider_platforms 
-		WHERE version_id IN (SELECT id FROM provider_versions WHERE provider_id = ?)
+		WHERE version_id IN (SELECT id FROM provider_versions WHERE provider_id = $1)
 	`, providerID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -725,14 +733,14 @@ func DeleteProviderByID(c *gin.Context) {
 	}
 
 	// Then delete all versions
-	_, err = database.DB.Exec("DELETE FROM provider_versions WHERE provider_id = ?", providerID)
+	_, err = database.DB.Exec("DELETE FROM provider_versions WHERE provider_id = $1", providerID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Then delete the provider
-	result, err := database.DB.Exec("DELETE FROM providers WHERE id = ?", providerID)
+	result, err := database.DB.Exec("DELETE FROM providers WHERE id = $1", providerID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -769,7 +777,7 @@ func AddProviderVersion(c *gin.Context) {
 
 	// Verify provider exists
 	var exists int
-	err := database.DB.QueryRow("SELECT 1 FROM providers WHERE id = ?", providerID).Scan(&exists)
+	err := database.DB.QueryRow("SELECT 1 FROM providers WHERE id = $1", providerID).Scan(&exists)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Provider not found"})
 		return
@@ -778,7 +786,7 @@ func AddProviderVersion(c *gin.Context) {
 	// Check if version already exists
 	var existingVersionID string
 	err = database.DB.QueryRow(`
-		SELECT id FROM provider_versions WHERE provider_id = ? AND version = ?
+		SELECT id FROM provider_versions WHERE provider_id = $1 AND version = $2
 	`, providerID, input.Version).Scan(&existingVersionID)
 
 	if err == nil {
@@ -797,7 +805,7 @@ func AddProviderVersion(c *gin.Context) {
 
 	_, err = database.DB.Exec(`
 		INSERT INTO provider_versions (id, provider_id, version, protocols, enabled, created_at)
-		VALUES (?, ?, ?, ?, TRUE, ?)
+		VALUES ($1, $2, $3, $4, TRUE, $5)
 	`, versionID, providerID, input.Version, string(protocolsJSON), now)
 
 	if err != nil {
@@ -806,7 +814,7 @@ func AddProviderVersion(c *gin.Context) {
 	}
 
 	// Update provider updated_at
-	database.DB.Exec("UPDATE providers SET updated_at = ? WHERE id = ?", now, providerID)
+	database.DB.Exec("UPDATE providers SET updated_at = $1 WHERE id = $2", now, providerID)
 
 	version := models.ProviderVersion{
 		ID:         versionID,
@@ -827,14 +835,14 @@ func DeleteProviderVersionByID(c *gin.Context) {
 	versionID := c.Param("versionId")
 
 	// First delete all platforms for this version
-	_, err := database.DB.Exec("DELETE FROM provider_platforms WHERE version_id = ?", versionID)
+	_, err := database.DB.Exec("DELETE FROM provider_platforms WHERE version_id = $1", versionID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	result, err := database.DB.Exec(`
-		DELETE FROM provider_versions WHERE id = ? AND provider_id = ?
+		DELETE FROM provider_versions WHERE id = $1 AND provider_id = $2
 	`, versionID, providerID)
 
 	if err != nil {
@@ -869,7 +877,7 @@ func syncProviderTagsBackgroundWithAuth(providerID string, sourceURL string, aut
 		if r := recover(); r != nil {
 			errorMsg := fmt.Sprintf("Panic during sync: %v", r)
 			log.Printf("Provider %s sync panic: %v", providerID, r)
-			database.DB.Exec("UPDATE providers SET synced = TRUE, sync_error = ?, updated_at = ? WHERE id = ?",
+			database.DB.Exec("UPDATE providers SET synced = TRUE, sync_error = $1, updated_at = $2 WHERE id = $3",
 				errorMsg, time.Now(), providerID)
 		}
 	}()
@@ -878,14 +886,14 @@ func syncProviderTagsBackgroundWithAuth(providerID string, sourceURL string, aut
 	if auth == nil {
 		var authType sql.NullString
 		var authData sql.NullString
-		err := database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM providers WHERE id = ?", providerID).Scan(&authType, &authData)
+		err := database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM providers WHERE id = $1", providerID).Scan(&authType, &authData)
 		if err == nil && authType.Valid && authData.Valid {
 			// Decrypt auth data
 			decryptedData, err := crypto.DecryptJSON(authData.String)
 			if err != nil {
 				errorMsg := fmt.Sprintf("Failed to decrypt authentication data: %v", err)
 				log.Printf("Provider %s decrypt error: %v", providerID, err)
-				database.DB.Exec("UPDATE providers SET synced = TRUE, sync_error = ?, updated_at = ? WHERE id = ?",
+				database.DB.Exec("UPDATE providers SET synced = TRUE, sync_error = $1, updated_at = $2 WHERE id = $3",
 					errorMsg, time.Now(), providerID)
 				return
 			}
@@ -894,9 +902,9 @@ func syncProviderTagsBackgroundWithAuth(providerID string, sourceURL string, aut
 			var authJSON map[string]string
 			if err := json.Unmarshal([]byte(decryptedData), &authJSON); err == nil {
 				auth = &git.AuthConfig{
-					Type:       authType.String,
-					Username:   authJSON["username"],
-					Password:   authJSON["password"],
+					Type:     authType.String,
+					Username: authJSON["username"],
+					Password: authJSON["password"],
 				}
 			}
 		}
@@ -907,7 +915,7 @@ func syncProviderTagsBackgroundWithAuth(providerID string, sourceURL string, aut
 	if err != nil {
 		errorMsg := fmt.Sprintf("Failed to fetch tags: %v", err)
 		log.Printf("Failed to fetch tags for provider %s: %v", providerID, err)
-		database.DB.Exec("UPDATE providers SET synced = TRUE, sync_error = ?, updated_at = ? WHERE id = ?",
+		database.DB.Exec("UPDATE providers SET synced = TRUE, sync_error = $1, updated_at = $2 WHERE id = $3",
 			errorMsg, time.Now(), providerID)
 		return
 	}
@@ -915,7 +923,7 @@ func syncProviderTagsBackgroundWithAuth(providerID string, sourceURL string, aut
 	if len(tags) == 0 {
 		errorMsg := "No valid version tags found in repository"
 		log.Printf("No tags found for provider %s", providerID)
-		database.DB.Exec("UPDATE providers SET synced = TRUE, sync_error = ?, updated_at = ? WHERE id = ?",
+		database.DB.Exec("UPDATE providers SET synced = TRUE, sync_error = $1, updated_at = $2 WHERE id = $3",
 			errorMsg, time.Now(), providerID)
 		return
 	}
@@ -927,7 +935,7 @@ func syncProviderTagsBackgroundWithAuth(providerID string, sourceURL string, aut
 	for _, tag := range tags {
 		var existingID string
 		err := database.DB.QueryRow(`
-			SELECT id FROM provider_versions WHERE provider_id = ? AND version = ?
+			SELECT id FROM provider_versions WHERE provider_id = $1 AND version = $2
 		`, providerID, tag.Version).Scan(&existingID)
 
 		if err != nil { // Version doesn't exist, create it
@@ -941,7 +949,7 @@ func syncProviderTagsBackgroundWithAuth(providerID string, sourceURL string, aut
 
 			_, err = database.DB.Exec(`
 				INSERT INTO provider_versions (id, provider_id, version, protocols, enabled, tag_date, created_at)
-				VALUES (?, ?, ?, ?, FALSE, ?, ?)
+				VALUES ($1, $2, $3, $4, FALSE, $5, $6)
 			`, versionID, providerID, tag.Version, string(protocolsJSON), tagDate, now)
 
 			if err == nil {
@@ -951,7 +959,7 @@ func syncProviderTagsBackgroundWithAuth(providerID string, sourceURL string, aut
 	}
 
 	// Update provider updated_at, mark as synced and clear errors
-	database.DB.Exec("UPDATE providers SET updated_at = ?, synced = TRUE, sync_error = NULL WHERE id = ?", now, providerID)
+	database.DB.Exec("UPDATE providers SET updated_at = $1, synced = TRUE, sync_error = NULL WHERE id = $2", now, providerID)
 
 	log.Printf("Background tag sync completed for provider %s: %d tags found, %d added", providerID, len(tags), addedCount)
 }
@@ -963,7 +971,7 @@ func SyncProviderTags(c *gin.Context) {
 
 	// Get provider and its source URL
 	var sourceURL *string
-	err := database.DB.QueryRow("SELECT source_url FROM providers WHERE id = ?", providerID).Scan(&sourceURL)
+	err := database.DB.QueryRow("SELECT source_url FROM providers WHERE id = $1", providerID).Scan(&sourceURL)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Provider not found"})
 		return
@@ -978,7 +986,7 @@ func SyncProviderTags(c *gin.Context) {
 	var auth *git.AuthConfig
 	var authType sql.NullString
 	var authData sql.NullString
-	err = database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM providers WHERE id = ?", providerID).Scan(&authType, &authData)
+	err = database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM providers WHERE id = $1", providerID).Scan(&authType, &authData)
 	if err == nil && authType.Valid && authData.Valid {
 		// Decrypt auth data
 		decryptedData, err := crypto.DecryptJSON(authData.String)
@@ -991,9 +999,9 @@ func SyncProviderTags(c *gin.Context) {
 		var authJSON map[string]string
 		if err := json.Unmarshal([]byte(decryptedData), &authJSON); err == nil {
 			auth = &git.AuthConfig{
-				Type:       authType.String,
-				Username:   authJSON["username"],
-				Password:   authJSON["password"],
+				Type:     authType.String,
+				Username: authJSON["username"],
+				Password: authJSON["password"],
 			}
 		}
 	}
@@ -1012,7 +1020,7 @@ func SyncProviderTags(c *gin.Context) {
 	for _, tag := range tags {
 		var existingID string
 		err := database.DB.QueryRow(`
-			SELECT id FROM provider_versions WHERE provider_id = ? AND version = ?
+			SELECT id FROM provider_versions WHERE provider_id = $1 AND version = $2
 		`, providerID, tag.Version).Scan(&existingID)
 
 		if err != nil { // Version doesn't exist, create it
@@ -1026,7 +1034,7 @@ func SyncProviderTags(c *gin.Context) {
 
 			_, err = database.DB.Exec(`
 				INSERT INTO provider_versions (id, provider_id, version, protocols, enabled, tag_date, created_at)
-				VALUES (?, ?, ?, ?, FALSE, ?, ?)
+				VALUES ($1, $2, $3, $4, FALSE, $5, $6)
 			`, versionID, providerID, tag.Version, string(protocolsJSON), tagDate, now)
 
 			if err == nil {
@@ -1036,7 +1044,7 @@ func SyncProviderTags(c *gin.Context) {
 	}
 
 	// Update provider updated_at
-	database.DB.Exec("UPDATE providers SET updated_at = ? WHERE id = ?", now, providerID)
+	database.DB.Exec("UPDATE providers SET updated_at = $1 WHERE id = $2", now, providerID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":    "Tags synced successfully",
@@ -1052,7 +1060,7 @@ func GetProviderGitTags(c *gin.Context) {
 
 	// Get provider and its source URL
 	var sourceURL *string
-	err := database.DB.QueryRow("SELECT source_url FROM providers WHERE id = ?", providerID).Scan(&sourceURL)
+	err := database.DB.QueryRow("SELECT source_url FROM providers WHERE id = $1", providerID).Scan(&sourceURL)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Provider not found"})
 		return
@@ -1081,7 +1089,7 @@ func GetProviderReadme(c *gin.Context) {
 
 	// Get provider source URL
 	var sourceURL *string
-	err := database.DB.QueryRow("SELECT source_url FROM providers WHERE id = ?", providerID).Scan(&sourceURL)
+	err := database.DB.QueryRow("SELECT source_url FROM providers WHERE id = $1", providerID).Scan(&sourceURL)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Provider not found"})
 		return
@@ -1096,7 +1104,7 @@ func GetProviderReadme(c *gin.Context) {
 	var auth *git.AuthConfig
 	var authType sql.NullString
 	var authData sql.NullString
-	err = database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM providers WHERE id = ?", providerID).Scan(&authType, &authData)
+	err = database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM providers WHERE id = $1", providerID).Scan(&authType, &authData)
 	if err == nil && authType.Valid && authData.Valid {
 		// Decrypt auth data
 		decryptedData, err := crypto.DecryptJSON(authData.String)
@@ -1105,9 +1113,9 @@ func GetProviderReadme(c *gin.Context) {
 			var authJSON map[string]string
 			if err := json.Unmarshal([]byte(decryptedData), &authJSON); err == nil {
 				auth = &git.AuthConfig{
-					Type:       authType.String,
-					Username:   authJSON["username"],
-					Password:   authJSON["password"],
+					Type:     authType.String,
+					Username: authJSON["username"],
+					Password: authJSON["password"],
 				}
 			}
 		}
@@ -1139,7 +1147,7 @@ func ToggleProviderVersion(c *gin.Context) {
 	}
 
 	result, err := database.DB.Exec(`
-		UPDATE provider_versions SET enabled = ? WHERE id = ? AND provider_id = ?
+		UPDATE provider_versions SET enabled = $1 WHERE id = $2 AND provider_id = $3
 	`, input.Enabled, versionID, providerID)
 
 	if err != nil {
@@ -1153,7 +1161,7 @@ func ToggleProviderVersion(c *gin.Context) {
 	}
 
 	// Update provider updated_at
-	database.DB.Exec("UPDATE providers SET updated_at = ? WHERE id = ?", time.Now(), providerID)
+	database.DB.Exec("UPDATE providers SET updated_at = $1 WHERE id = $2", time.Now(), providerID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Version updated", "enabled": input.Enabled})
 }
@@ -1169,7 +1177,7 @@ func GetProviderPlatforms(c *gin.Context) {
 		       COALESCE(shasums_signature_url, '') as shasums_signature_url,
 		       shasum, COALESCE(signing_keys, '') as signing_keys
 		FROM provider_platforms
-		WHERE version_id = ?
+		WHERE version_id = $1
 		ORDER BY os, arch
 	`, versionID)
 	if err != nil {
@@ -1206,7 +1214,7 @@ func AddProviderPlatform(c *gin.Context) {
 	// Verify version exists and belongs to provider
 	var exists int
 	err := database.DB.QueryRow(`
-		SELECT 1 FROM provider_versions WHERE id = ? AND provider_id = ?
+		SELECT 1 FROM provider_versions WHERE id = $1 AND provider_id = $2
 	`, versionID, providerID).Scan(&exists)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Version not found"})
@@ -1216,7 +1224,7 @@ func AddProviderPlatform(c *gin.Context) {
 	// Check if platform already exists
 	var existingID string
 	err = database.DB.QueryRow(`
-		SELECT id FROM provider_platforms WHERE version_id = ? AND os = ? AND arch = ?
+		SELECT id FROM provider_platforms WHERE version_id = $1 AND os = $2 AND arch = $3
 	`, versionID, input.OS, input.Arch).Scan(&existingID)
 	if err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "Platform already exists for this OS/arch"})
@@ -1227,7 +1235,7 @@ func AddProviderPlatform(c *gin.Context) {
 	platformID := generateID()
 	_, err = database.DB.Exec(`
 		INSERT INTO provider_platforms (id, version_id, os, arch, filename, download_url, shasums_url, shasums_signature_url, shasum, signing_keys)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`, platformID, versionID, input.OS, input.Arch, input.Filename, input.DownloadURL,
 		input.SHASumsURL, input.SHASumsSignature, input.SHASum, input.SigningKeys)
 
@@ -1237,7 +1245,7 @@ func AddProviderPlatform(c *gin.Context) {
 	}
 
 	// Update provider updated_at
-	database.DB.Exec("UPDATE providers SET updated_at = ? WHERE id = ?", time.Now(), providerID)
+	database.DB.Exec("UPDATE providers SET updated_at = $1 WHERE id = $2", time.Now(), providerID)
 
 	platform := models.ProviderPlatform{
 		ID:               platformID,
@@ -1270,7 +1278,7 @@ func DeleteProviderPlatform(c *gin.Context) {
 		JOIN provider_versions pv ON pp.version_id = pv.id
 		JOIN providers p ON pv.provider_id = p.id
 		JOIN namespaces n ON p.namespace_id = n.id
-		WHERE pp.id = ? AND pp.version_id = ? AND pv.provider_id = ?
+		WHERE pp.id = $1 AND pp.version_id = $2 AND pv.provider_id = $3
 	`, platformID, versionID, providerID).Scan(&filename, &namespace, &providerName, &version)
 
 	if err != nil {
@@ -1281,8 +1289,8 @@ func DeleteProviderPlatform(c *gin.Context) {
 	// Delete from database
 	result, err := database.DB.Exec(`
 		DELETE FROM provider_platforms 
-		WHERE id = ? AND version_id = ? 
-		AND version_id IN (SELECT id FROM provider_versions WHERE provider_id = ?)
+		WHERE id = $1 AND version_id = $2 
+		AND version_id IN (SELECT id FROM provider_versions WHERE provider_id = $3)
 	`, platformID, versionID, providerID)
 
 	if err != nil {
@@ -1306,7 +1314,7 @@ func DeleteProviderPlatform(c *gin.Context) {
 	}
 
 	// Update provider updated_at
-	database.DB.Exec("UPDATE providers SET updated_at = ? WHERE id = ?", time.Now(), providerID)
+	database.DB.Exec("UPDATE providers SET updated_at = $1 WHERE id = $2", time.Now(), providerID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Platform deleted"})
 }
@@ -1332,7 +1340,7 @@ func UploadProviderPlatform(c *gin.Context) {
 		SELECT p.name, n.name
 		FROM providers p
 		JOIN namespaces n ON p.namespace_id = n.id
-		WHERE p.id = ?
+		WHERE p.id = $1
 	`, providerID).Scan(&providerName, &namespace)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Provider not found"})
@@ -1342,7 +1350,7 @@ func UploadProviderPlatform(c *gin.Context) {
 	// Get version info
 	var version string
 	err = database.DB.QueryRow(`
-		SELECT version FROM provider_versions WHERE id = ? AND provider_id = ?
+		SELECT version FROM provider_versions WHERE id = $1 AND provider_id = $2
 	`, versionID, providerID).Scan(&version)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Version not found"})
@@ -1404,7 +1412,15 @@ func UploadProviderPlatform(c *gin.Context) {
 			host = c.GetHeader("Host")
 		}
 		if host == "" {
-			host = "localhost:9080"
+			backendHost := os.Getenv("BACKEND_HOST")
+			if backendHost == "" {
+				backendHost = "localhost"
+			}
+			backendPort := os.Getenv("PORT")
+			if backendPort == "" {
+				backendPort = "9080"
+			}
+			host = backendHost + ":" + backendPort
 		}
 		scheme := c.GetHeader("X-Forwarded-Proto")
 		if scheme == "" {
@@ -1417,21 +1433,21 @@ func UploadProviderPlatform(c *gin.Context) {
 	// Check if platform already exists
 	var existingID string
 	err = database.DB.QueryRow(`
-		SELECT id FROM provider_platforms WHERE version_id = ? AND os = ? AND arch = ?
+		SELECT id FROM provider_platforms WHERE version_id = $1 AND os = $2 AND arch = $3
 	`, versionID, osParam, arch).Scan(&existingID)
 
 	if err == nil {
 		// Update existing platform
 		_, err = database.DB.Exec(`
-			UPDATE provider_platforms SET filename = ?, download_url = ?, shasum = ?
-			WHERE id = ?
+			UPDATE provider_platforms SET filename = $1, download_url = $2, shasum = $3
+			WHERE id = $1
 		`, filename, downloadURL, shasum, existingID)
 	} else {
 		// Create new platform
 		platformID := generateID()
 		_, err = database.DB.Exec(`
 			INSERT INTO provider_platforms (id, version_id, os, arch, filename, download_url, shasum)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
 		`, platformID, versionID, osParam, arch, filename, downloadURL, shasum)
 		existingID = platformID
 	}
@@ -1442,7 +1458,7 @@ func UploadProviderPlatform(c *gin.Context) {
 	}
 
 	// Update provider updated_at
-	database.DB.Exec("UPDATE providers SET updated_at = ? WHERE id = ?", time.Now(), providerID)
+	database.DB.Exec("UPDATE providers SET updated_at = $1 WHERE id = $2", time.Now(), providerID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":      "Platform uploaded successfully",

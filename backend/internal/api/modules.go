@@ -34,7 +34,7 @@ func TFListModuleVersions(c *gin.Context) {
 	err := database.DB.QueryRow(`
 		SELECT m.id FROM modules m
 		JOIN namespaces n ON m.namespace_id = n.id
-		WHERE n.name = ? AND m.name = ? AND m.provider = ?
+		WHERE n.name = $1 AND m.name = $2 AND m.provider = $3
 	`, namespace, name, provider).Scan(&moduleID)
 
 	if err != nil {
@@ -47,7 +47,7 @@ func TFListModuleVersions(c *gin.Context) {
 	// Get versions (only enabled ones for Terraform)
 	rows, err := database.DB.Query(`
 		SELECT version FROM module_versions
-		WHERE module_id = ? AND enabled = TRUE
+		WHERE module_id = $1 AND enabled = TRUE
 		ORDER BY COALESCE(tag_date, created_at) DESC
 	`, moduleID)
 	if err != nil {
@@ -90,7 +90,7 @@ func TFDownloadModule(c *gin.Context) {
 		SELECT mv.download_url, mv.enabled FROM module_versions mv
 		JOIN modules m ON mv.module_id = m.id
 		JOIN namespaces n ON m.namespace_id = n.id
-		WHERE n.name = ? AND m.name = ? AND m.provider = ? AND mv.version = ?
+		WHERE n.name = $1 AND m.name = $2 AND m.provider = $3 AND mv.version = $4
 	`, namespace, name, provider, version).Scan(&downloadURL, &enabled)
 
 	if err != nil {
@@ -130,7 +130,7 @@ func GetModules(c *gin.Context) {
 	args := []interface{}{}
 
 	if namespaceFilter != "" {
-		query += " WHERE n.name = ?"
+		query += " WHERE n.name = $1"
 		args = append(args, namespaceFilter)
 	}
 
@@ -167,7 +167,7 @@ func GetModule(c *gin.Context) {
 			   m.synced, m.sync_error, m.created_at, m.updated_at, n.name as namespace
 		FROM modules m
 		JOIN namespaces n ON m.namespace_id = n.id
-		WHERE m.id = ?
+		WHERE m.id = $1
 	`, id).Scan(&mod.ID, &mod.NamespaceID, &mod.Name, &mod.Provider, &mod.Description,
 		&mod.SourceURL, &mod.Synced, &mod.SyncError, &mod.CreatedAt, &mod.UpdatedAt, &mod.Namespace)
 
@@ -205,7 +205,7 @@ func CreateModule(c *gin.Context) {
 
 	// Get namespace ID
 	var namespaceID string
-	err := database.DB.QueryRow("SELECT id FROM namespaces WHERE name = ?", namespace).Scan(&namespaceID)
+	err := database.DB.QueryRow("SELECT id FROM namespaces WHERE name = $1", namespace).Scan(&namespaceID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"errors": []string{"Namespace not found"}})
 		return
@@ -216,7 +216,7 @@ func CreateModule(c *gin.Context) {
 
 	_, err = database.DB.Exec(`
 		INSERT INTO modules (id, namespace_id, name, provider, description, source_url, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`, id, namespaceID, name, provider, input.Description, input.SourceURL, now, now)
 
 	if err != nil {
@@ -274,13 +274,13 @@ func UploadModuleVersion(c *gin.Context) {
 	err := database.DB.QueryRow(`
 		SELECT m.id FROM modules m
 		JOIN namespaces n ON m.namespace_id = n.id
-		WHERE n.name = ? AND m.name = ? AND m.provider = ?
+		WHERE n.name = $1 AND m.name = $2 AND m.provider = $3
 	`, namespace, name, provider).Scan(&moduleID)
 
 	if err != nil {
 		// Create module first
 		var namespaceID string
-		err := database.DB.QueryRow("SELECT id FROM namespaces WHERE name = ?", namespace).Scan(&namespaceID)
+		err := database.DB.QueryRow("SELECT id FROM namespaces WHERE name = $1", namespace).Scan(&namespaceID)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"errors": []string{"Namespace not found"}})
 			return
@@ -290,7 +290,7 @@ func UploadModuleVersion(c *gin.Context) {
 		now := time.Now()
 		_, err = database.DB.Exec(`
 			INSERT INTO modules (id, namespace_id, name, provider, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?)
+			VALUES ($1, $2, $3, $4, $5, $6)
 		`, moduleID, namespaceID, name, provider, now, now)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"errors": []string{err.Error()}})
@@ -304,7 +304,7 @@ func UploadModuleVersion(c *gin.Context) {
 
 	_, err = database.DB.Exec(`
 		INSERT INTO module_versions (id, module_id, version, download_url, documentation, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6)
 	`, versionID, moduleID, version, input.DownloadURL, input.Documentation, now)
 
 	if err != nil {
@@ -326,7 +326,7 @@ func GetModuleVersions(c *gin.Context) {
 	rows, err := database.DB.Query(`
 		SELECT id, version, download_url, documentation, enabled, tag_date, created_at
 		FROM module_versions
-		WHERE module_id = ?
+		WHERE module_id = $1
 		ORDER BY COALESCE(tag_date, created_at) DESC
 	`, id)
 	if err != nil {
@@ -373,7 +373,7 @@ func DeleteModule(c *gin.Context) {
 		WHERE id IN (
 			SELECT m.id FROM modules m
 			JOIN namespaces n ON m.namespace_id = n.id
-			WHERE n.name = ? AND m.name = ? AND m.provider = ?
+			WHERE n.name = $1 AND m.name = $2 AND m.provider = $3
 		)
 	`, namespace, name, provider)
 	if err != nil {
@@ -409,7 +409,7 @@ func DeleteModuleVersion(c *gin.Context) {
 			SELECT mv.id FROM module_versions mv
 			JOIN modules m ON mv.module_id = m.id
 			JOIN namespaces n ON m.namespace_id = n.id
-			WHERE n.name = ? AND m.name = ? AND m.provider = ? AND mv.version = ?
+			WHERE n.name = $1 AND m.name = $2 AND m.provider = $3 AND mv.version = $4
 		)
 	`, namespace, name, provider, version)
 	if err != nil {
@@ -428,7 +428,7 @@ func DeleteModuleVersion(c *gin.Context) {
 		SELECT COUNT(*) FROM module_versions mv
 		JOIN modules m ON mv.module_id = m.id
 		JOIN namespaces n ON m.namespace_id = n.id
-		WHERE n.name = ? AND m.name = ? AND m.provider = ?
+		WHERE n.name = $1 AND m.name = $2 AND m.provider = $3
 	`, namespace, name, provider).Scan(&count)
 
 	if count == 0 {
@@ -437,7 +437,7 @@ func DeleteModuleVersion(c *gin.Context) {
 			WHERE id IN (
 				SELECT m.id FROM modules m
 				JOIN namespaces n ON m.namespace_id = n.id
-				WHERE n.name = ? AND m.name = ? AND m.provider = ?
+				WHERE n.name = $1 AND m.name = $2 AND m.provider = $3
 			)
 		`, namespace, name, provider)
 	}
@@ -456,7 +456,7 @@ func UpdateModule(c *gin.Context) {
 	}
 
 	// Build update query dynamically
-	query := "UPDATE modules SET updated_at = ?"
+	query := "UPDATE modules SET updated_at = $1"
 	args := []interface{}{time.Now()}
 
 	if input.Name != nil {
@@ -476,7 +476,7 @@ func UpdateModule(c *gin.Context) {
 		args = append(args, *input.SourceURL)
 	}
 
-	query += " WHERE id = ?"
+	query += " WHERE id = $1"
 	args = append(args, id)
 
 	result, err := database.DB.Exec(query, args...)
@@ -519,7 +519,7 @@ func CreateModuleFromGit(c *gin.Context) {
 
 	// Validate Git URL format
 	if !isValidGitURL(input.GitURL) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Git URL. Must be a valid git repository URL (https:// or git@)"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Git URL. Must be a valid HTTPS git repository URL (e.g., https://github.com/org/repo.git)"})
 		return
 	}
 
@@ -558,7 +558,7 @@ func CreateModuleFromGit(c *gin.Context) {
 
 	// Verify namespace exists
 	var namespaceName string
-	err := database.DB.QueryRow("SELECT name FROM namespaces WHERE id = ?", input.NamespaceID).Scan(&namespaceName)
+	err := database.DB.QueryRow("SELECT name FROM namespaces WHERE id = $1", input.NamespaceID).Scan(&namespaceName)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Namespace not found"})
 		return
@@ -568,7 +568,7 @@ func CreateModuleFromGit(c *gin.Context) {
 	var existingID string
 	err = database.DB.QueryRow(`
 		SELECT id FROM modules 
-		WHERE namespace_id = ? AND name = ? AND provider = ?
+		WHERE namespace_id = $1 AND name = $2 AND provider = $3
 	`, input.NamespaceID, input.Name, input.Provider).Scan(&existingID)
 
 	if err == nil {
@@ -587,7 +587,7 @@ func CreateModuleFromGit(c *gin.Context) {
 
 	_, err = database.DB.Exec(`
 		INSERT INTO modules (id, namespace_id, name, provider, description, source_url, synced, git_auth_type, git_auth_data, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, FALSE, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, FALSE, $7, $8, $9, $10)
 	`, moduleID, input.NamespaceID, input.Name, input.Provider, input.Description, sourceURL, sql.NullString{String: "https", Valid: input.IsPrivate && input.GitUsername != ""}, authData, now, now)
 
 	if err != nil {
@@ -624,7 +624,7 @@ func SyncModuleTags(c *gin.Context) {
 
 	// Get module and its source URL
 	var sourceURL string
-	err := database.DB.QueryRow("SELECT source_url FROM modules WHERE id = ?", moduleID).Scan(&sourceURL)
+	err := database.DB.QueryRow("SELECT source_url FROM modules WHERE id = $1", moduleID).Scan(&sourceURL)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Module not found"})
 		return
@@ -637,7 +637,7 @@ func SyncModuleTags(c *gin.Context) {
 	var auth *git.AuthConfig
 	var authType sql.NullString
 	var authData sql.NullString
-	err = database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM modules WHERE id = ?", moduleID).Scan(&authType, &authData)
+	err = database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM modules WHERE id = $1", moduleID).Scan(&authType, &authData)
 	if err == nil && authType.Valid && authData.Valid {
 		// Decrypt auth data
 		decryptedData, err := crypto.DecryptJSON(authData.String)
@@ -671,7 +671,7 @@ func SyncModuleTags(c *gin.Context) {
 	for _, tag := range tags {
 		var existingID string
 		err := database.DB.QueryRow(`
-			SELECT id FROM module_versions WHERE module_id = ? AND version = ?
+			SELECT id FROM module_versions WHERE module_id = $1 AND version = $2
 		`, moduleID, tag.Version).Scan(&existingID)
 
 		if err != nil { // Version doesn't exist, create it
@@ -685,7 +685,7 @@ func SyncModuleTags(c *gin.Context) {
 
 			_, err = database.DB.Exec(`
 				INSERT INTO module_versions (id, module_id, version, download_url, enabled, tag_date, created_at)
-				VALUES (?, ?, ?, ?, FALSE, ?, ?)
+				VALUES ($1, $2, $3, $4, FALSE, $5, $6)
 			`, versionID, moduleID, tag.Version, downloadURL, tagDate, now)
 
 			if err == nil {
@@ -695,7 +695,7 @@ func SyncModuleTags(c *gin.Context) {
 	}
 
 	// Update module: mark as synced and clear sync errors
-	database.DB.Exec("UPDATE modules SET updated_at = ?, synced = TRUE, sync_error = NULL WHERE id = ?", now, moduleID)
+	database.DB.Exec("UPDATE modules SET updated_at = $1, synced = TRUE, sync_error = NULL WHERE id = $2", now, moduleID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":    "Tags synced successfully",
@@ -718,7 +718,7 @@ func syncModuleTagsBackgroundWithAuth(moduleID string, gitURL string, subdir *st
 		if r := recover(); r != nil {
 			errorMsg := fmt.Sprintf("Panic during sync: %v", r)
 			log.Printf("Module %s sync panic: %v", moduleID, r)
-			database.DB.Exec("UPDATE modules SET synced = TRUE, sync_error = ?, updated_at = ? WHERE id = ?",
+			database.DB.Exec("UPDATE modules SET synced = TRUE, sync_error = $1, updated_at = $2 WHERE id = $3",
 				errorMsg, time.Now(), moduleID)
 		}
 	}()
@@ -727,14 +727,14 @@ func syncModuleTagsBackgroundWithAuth(moduleID string, gitURL string, subdir *st
 	if auth == nil {
 		var authType sql.NullString
 		var authData sql.NullString
-		err := database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM modules WHERE id = ?", moduleID).Scan(&authType, &authData)
+		err := database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM modules WHERE id = $1", moduleID).Scan(&authType, &authData)
 		if err == nil && authType.Valid && authData.Valid {
 			// Decrypt auth data
 			decryptedData, err := crypto.DecryptJSON(authData.String)
 			if err != nil {
 				errorMsg := fmt.Sprintf("Failed to decrypt authentication data: %v", err)
 				log.Printf("Module %s decrypt error: %v", moduleID, err)
-				database.DB.Exec("UPDATE modules SET synced = TRUE, sync_error = ?, updated_at = ? WHERE id = ?",
+				database.DB.Exec("UPDATE modules SET synced = TRUE, sync_error = $1, updated_at = $2 WHERE id = $3",
 					errorMsg, time.Now(), moduleID)
 				return
 			}
@@ -756,7 +756,7 @@ func syncModuleTagsBackgroundWithAuth(moduleID string, gitURL string, subdir *st
 		errorMsg := fmt.Sprintf("Failed to fetch tags: %v", err)
 		log.Printf("Failed to fetch tags for module %s: %v", moduleID, err)
 		// Mark as synced but with error so it stops trying automatically
-		database.DB.Exec("UPDATE modules SET synced = TRUE, sync_error = ?, updated_at = ? WHERE id = ?",
+		database.DB.Exec("UPDATE modules SET synced = TRUE, sync_error = $1, updated_at = $2 WHERE id = $3",
 			errorMsg, time.Now(), moduleID)
 		return
 	}
@@ -764,7 +764,7 @@ func syncModuleTagsBackgroundWithAuth(moduleID string, gitURL string, subdir *st
 	if len(tags) == 0 {
 		errorMsg := "No valid version tags found in repository"
 		log.Printf("No tags found for module %s", moduleID)
-		database.DB.Exec("UPDATE modules SET synced = TRUE, sync_error = ?, updated_at = ? WHERE id = ?",
+		database.DB.Exec("UPDATE modules SET synced = TRUE, sync_error = $1, updated_at = $2 WHERE id = $3",
 			errorMsg, time.Now(), moduleID)
 		return
 	}
@@ -775,7 +775,7 @@ func syncModuleTagsBackgroundWithAuth(moduleID string, gitURL string, subdir *st
 	for _, tag := range tags {
 		var existingID string
 		err := database.DB.QueryRow(`
-			SELECT id FROM module_versions WHERE module_id = ? AND version = ?
+			SELECT id FROM module_versions WHERE module_id = $1 AND version = $2
 		`, moduleID, tag.Version).Scan(&existingID)
 
 		if err != nil {
@@ -789,7 +789,7 @@ func syncModuleTagsBackgroundWithAuth(moduleID string, gitURL string, subdir *st
 
 			_, err = database.DB.Exec(`
 				INSERT INTO module_versions (id, module_id, version, download_url, enabled, tag_date, created_at)
-				VALUES (?, ?, ?, ?, FALSE, ?, ?)
+				VALUES ($1, $2, $3, $4, FALSE, $5, $6)
 			`, versionID, moduleID, tag.Version, downloadURL, tagDate, now)
 
 			if err == nil {
@@ -799,7 +799,7 @@ func syncModuleTagsBackgroundWithAuth(moduleID string, gitURL string, subdir *st
 	}
 
 	// Update module: mark as synced and clear any previous errors
-	database.DB.Exec("UPDATE modules SET updated_at = ?, synced = TRUE, sync_error = NULL WHERE id = ?", now, moduleID)
+	database.DB.Exec("UPDATE modules SET updated_at = $1, synced = TRUE, sync_error = NULL WHERE id = $2", now, moduleID)
 
 	log.Printf("Background tag sync completed for module %s: %d tags found, %d added", moduleID, len(tags), addedCount)
 }
@@ -811,7 +811,7 @@ func GetModuleGitTags(c *gin.Context) {
 
 	// Get module and its source URL
 	var sourceURL string
-	err := database.DB.QueryRow("SELECT source_url FROM modules WHERE id = ?", moduleID).Scan(&sourceURL)
+	err := database.DB.QueryRow("SELECT source_url FROM modules WHERE id = $1", moduleID).Scan(&sourceURL)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Module not found"})
 		return
@@ -846,7 +846,7 @@ func ToggleModuleVersion(c *gin.Context) {
 	}
 
 	result, err := database.DB.Exec(`
-		UPDATE module_versions SET enabled = ? WHERE id = ? AND module_id = ?
+		UPDATE module_versions SET enabled = $1 WHERE id = $2 AND module_id = $3
 	`, input.Enabled, versionID, moduleID)
 
 	if err != nil {
@@ -860,7 +860,7 @@ func ToggleModuleVersion(c *gin.Context) {
 	}
 
 	// Update module updated_at
-	database.DB.Exec("UPDATE modules SET updated_at = ? WHERE id = ?", time.Now(), moduleID)
+	database.DB.Exec("UPDATE modules SET updated_at = $1 WHERE id = $2", time.Now(), moduleID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Version updated", "enabled": input.Enabled})
 }
@@ -873,7 +873,7 @@ func GetModuleReadme(c *gin.Context) {
 
 	// Get module source URL
 	var sourceURL string
-	err := database.DB.QueryRow("SELECT source_url FROM modules WHERE id = ?", moduleID).Scan(&sourceURL)
+	err := database.DB.QueryRow("SELECT source_url FROM modules WHERE id = $1", moduleID).Scan(&sourceURL)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Module not found"})
 		return
@@ -886,7 +886,7 @@ func GetModuleReadme(c *gin.Context) {
 	var auth *git.AuthConfig
 	var authType sql.NullString
 	var authData sql.NullString
-	err = database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM modules WHERE id = ?", moduleID).Scan(&authType, &authData)
+	err = database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM modules WHERE id = $1", moduleID).Scan(&authType, &authData)
 	if err == nil && authType.Valid && authData.Valid {
 		// Decrypt auth data
 		decryptedData, err := crypto.DecryptJSON(authData.String)
@@ -937,7 +937,7 @@ func AddModuleVersion(c *gin.Context) {
 
 	// Get module and its source URL
 	var sourceURL string
-	err := database.DB.QueryRow("SELECT source_url FROM modules WHERE id = ?", moduleID).Scan(&sourceURL)
+	err := database.DB.QueryRow("SELECT source_url FROM modules WHERE id = $1", moduleID).Scan(&sourceURL)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Module not found"})
 		return
@@ -946,7 +946,7 @@ func AddModuleVersion(c *gin.Context) {
 	// Check if version already exists
 	var existingVersionID string
 	err = database.DB.QueryRow(`
-		SELECT id FROM module_versions WHERE module_id = ? AND version = ?
+		SELECT id FROM module_versions WHERE module_id = $1 AND version = $2
 	`, moduleID, input.Version).Scan(&existingVersionID)
 
 	if err == nil {
@@ -970,7 +970,7 @@ func AddModuleVersion(c *gin.Context) {
 
 	_, err = database.DB.Exec(`
 		INSERT INTO module_versions (id, module_id, version, download_url, enabled, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6)
 	`, versionID, moduleID, input.Version, downloadURL, input.Enabled, now)
 
 	if err != nil {
@@ -979,7 +979,7 @@ func AddModuleVersion(c *gin.Context) {
 	}
 
 	// Update module updated_at
-	database.DB.Exec("UPDATE modules SET updated_at = ? WHERE id = ?", now, moduleID)
+	database.DB.Exec("UPDATE modules SET updated_at = $1 WHERE id = $2", now, moduleID)
 
 	version := models.ModuleVersion{
 		ID:          versionID,
@@ -1000,7 +1000,7 @@ func DeleteModuleVersionByID(c *gin.Context) {
 	versionID := c.Param("versionId")
 
 	result, err := database.DB.Exec(`
-		DELETE FROM module_versions WHERE id = ? AND module_id = ?
+		DELETE FROM module_versions WHERE id = $1 AND module_id = $2
 	`, versionID, moduleID)
 
 	if err != nil {
@@ -1022,14 +1022,14 @@ func DeleteModuleByID(c *gin.Context) {
 	moduleID := c.Param("id")
 
 	// First delete all versions
-	_, err := database.DB.Exec("DELETE FROM module_versions WHERE module_id = ?", moduleID)
+	_, err := database.DB.Exec("DELETE FROM module_versions WHERE module_id = $1", moduleID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Then delete the module
-	result, err := database.DB.Exec("DELETE FROM modules WHERE id = ?", moduleID)
+	result, err := database.DB.Exec("DELETE FROM modules WHERE id = $1", moduleID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

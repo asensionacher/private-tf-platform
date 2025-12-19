@@ -474,21 +474,43 @@ export default function DeploymentDetailPage() {
                             <div className="flex items-center gap-3">
                                 {currentDirStatus && (
                                     <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800 rounded-lg">
-                                        <span className={`inline-flex h-3 w-3 rounded-full ${currentDirStatus.status_color === 'green' ? 'bg-green-500' :
+                                        <span className={`inline-flex h-3 w-3 rounded-full ${
+                                            currentDirStatus.status_color === 'green' ? 'bg-green-500' :
                                             currentDirStatus.status_color === 'yellow' ? 'bg-yellow-500 animate-pulse' :
-                                                currentDirStatus.status_color === 'red' ? 'bg-red-500' :
-                                                    'bg-blue-500'
-                                            }`}></span>
-                                        <span className={`text-sm font-medium ${currentDirStatus.status_color === 'green' ? 'text-green-600 dark:text-green-400' :
+                                            currentDirStatus.status_color === 'red' ? 'bg-red-500' :
+                                            currentDirStatus.status_color === 'purple' ? 'bg-purple-500 animate-pulse' :
+                                            currentDirStatus.status_color === 'gray' ? 'bg-gray-500' :
+                                            'bg-blue-500'
+                                        }`}></span>
+                                        <span className={`text-sm font-medium flex items-center gap-2 ${
+                                            currentDirStatus.status_color === 'green' ? 'text-green-600 dark:text-green-400' :
                                             currentDirStatus.status_color === 'yellow' ? 'text-yellow-600 dark:text-yellow-400' :
-                                                currentDirStatus.status_color === 'red' ? 'text-red-600 dark:text-red-400' :
-                                                    'text-blue-600 dark:text-blue-400'
-                                            }`}>
-                                            {currentDirStatus.status === 'none' ? 'No deployments' :
-                                                currentDirStatus.status === 'running' ? 'Deploying...' :
-                                                    currentDirStatus.status === 'success' ? 'Last deploy succeeded' :
-                                                        'Last deploy failed'
-                                            }
+                                            currentDirStatus.status_color === 'red' ? 'text-red-600 dark:text-red-400' :
+                                            currentDirStatus.status_color === 'purple' ? 'text-purple-600 dark:text-purple-400' :
+                                            currentDirStatus.status_color === 'gray' ? 'text-gray-600 dark:text-gray-400' :
+                                            'text-blue-600 dark:text-blue-400'
+                                        }`}>
+                                            {currentDirStatus.status === 'none' ? (
+                                                'No deployments'
+                                            ) : currentDirStatus.status === 'pending' ? (
+                                                'Pending...'
+                                            ) : currentDirStatus.status === 'initializing' ? (
+                                                'Initializing...'
+                                            ) : currentDirStatus.status === 'planning' ? (
+                                                'Planning...'
+                                            ) : currentDirStatus.status === 'awaiting_approval' ? (
+                                                'Awaiting approval'
+                                            ) : currentDirStatus.status === 'applying' ? (
+                                                'Applying...'
+                                            ) : currentDirStatus.status === 'success' ? (
+                                                'Last deploy succeeded'
+                                            ) : currentDirStatus.status === 'cancelled' ? (
+                                                'Cancelled'
+                                            ) : currentDirStatus.status === 'failed' ? (
+                                                'Last deploy failed'
+                                            ) : (
+                                                'Unknown status'
+                                            )}
                                         </span>
                                     </div>
                                 )}

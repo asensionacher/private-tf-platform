@@ -10,7 +10,7 @@ import DeploymentsPage from './pages/DeploymentsPage'
 import DeploymentDetailPage from './pages/DeploymentDetailPage'
 import DeploymentRunsPage from './pages/DeploymentRunsPage'
 import DeploymentRunDetailPage from './pages/DeploymentRunDetailPage'
-import SettingsPage from './pages/SettingsPage'
+import ApiKeysPage from './pages/ApiKeysPage'
 
 function App() {
   return (
@@ -27,7 +27,7 @@ function App() {
         <Route path="/deployments/:id/runs/:runId" element={<DeploymentRunDetailPage />} />
         <Route path="/deployments/:id/runs" element={<DeploymentRunsPage />} />
         <Route path="/deployments/:id" element={<DeploymentDetailPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/api-keys" element={<ApiKeysPage />} />
       </Routes>
     </Layout>
   )

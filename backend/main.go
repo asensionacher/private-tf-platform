@@ -48,7 +48,26 @@ func main() {
 
 	// CORS configuration
 	config := cors.DefaultConfig()
-	config.AllowOrigins = []string{"http://localhost:3000", "http://localhost:5173", "*"}
+
+	// Get host and ports from environment
+	frontendHost := os.Getenv("FRONTEND_HOST")
+	if frontendHost == "" {
+		frontendHost = "localhost"
+	}
+	frontendPort := os.Getenv("FRONTEND_PORT")
+	if frontendPort == "" {
+		frontendPort = "3000"
+	}
+	viteDevPort := os.Getenv("VITE_DEV_PORT")
+	if viteDevPort == "" {
+		viteDevPort = "5173"
+	}
+
+	config.AllowOrigins = []string{
+		"http://" + frontendHost + ":" + frontendPort,
+		"http://" + frontendHost + ":" + viteDevPort,
+		"*",
+	}
 	config.AllowMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
 	config.AllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization", "X-API-Key"}
 	r.Use(cors.New(config))
@@ -155,6 +174,7 @@ func main() {
 		apiGroup.GET("/deployments/:id/runs/:runId/stream", api.StreamDeploymentRunLogs)
 		apiGroup.POST("/deployments/:id/runs/:runId/approve", api.ApproveDeploymentRun)
 		apiGroup.POST("/deployments/:id/runs/:runId/cancel", api.CancelDeploymentRun)
+		apiGroup.DELETE("/deployments/:id/runs/:runId", api.DeleteDeploymentRun)
 		apiGroup.GET("/deployments/:id/status", api.GetDirectoryStatus)
 
 		// Internal registry token endpoint (for runner)

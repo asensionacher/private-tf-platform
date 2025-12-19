@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { Boxes, Package, FolderTree, Settings, Sun, Moon, Rocket } from 'lucide-react';
+import { Boxes, Package, FolderTree, Key, Sun, Moon, Rocket } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 
 interface LayoutProps {
@@ -14,7 +14,7 @@ export default function Layout({ children }: LayoutProps) {
     { to: '/providers', label: 'Providers', icon: Package },
     { to: '/deployments', label: 'Deployments', icon: Rocket },
     { to: '/namespaces', label: 'Namespaces', icon: FolderTree },
-    { to: '/settings', label: 'Settings', icon: Settings },
+    { to: '/api-keys', label: 'API Keys', icon: Key },
   ];
 
   return (

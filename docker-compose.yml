@@ -1,24 +1,57 @@
 services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: iac-registry-postgres
+    ports:
+      - "${POSTGRES_PORT_EXTERNAL:-5432}:5432"
+    environment:
+      - POSTGRES_DB=registry
+      - POSTGRES_USER=registry
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-registry-password-change-me}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - registry-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U registry"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: .
       dockerfile: backend/Dockerfile
     container_name: iac-registry-backend
     ports:
-      - "9080:9080"
+      - "${BACKEND_PORT:-9080}:9080"
     volumes:
       - registry-data:/app/data
       - deployment-workdir:/tmp/iac-deployments
     environment:
       - GIN_MODE=release
-      - DB_PATH=/app/data/registry.db
+      - PORT=${BACKEND_PORT:-9080}
+      - BACKEND_HOST=${BACKEND_HOST:-localhost}
+      - FRONTEND_HOST=${FRONTEND_HOST:-localhost}
+      - FRONTEND_PORT=${FRONTEND_PORT:-3000}
+      - VITE_DEV_PORT=${VITE_DEV_PORT:-5173}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=registry
+      - POSTGRES_USER=registry
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-registry-password-change-me}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-to-a-secure-32-char-key!}
       - RUNNER_URL=${RUNNER_URL:-http://runner:8080}
+      - REGISTRY_HOST=${REGISTRY_HOST:-registry.local}
     restart: unless-stopped
     networks:
       - registry-network
     depends_on:
-      - runner
+      postgres:
+        condition: service_healthy
+      runner:
+        condition: service_started
 
   runner:
     build:
@@ -26,12 +59,12 @@ services:
       dockerfile: Dockerfile
     container_name: iac-runner
     ports:
-      - "8080:8080"
+      - "${RUNNER_PORT:-8080}:8080"
     volumes:
       - deployment-workdir:/tmp/iac-deployments
     environment:
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
-      - REGISTRY_URL=${REGISTRY_URL:-http://registry.local:9080}
+      - REGISTRY_HOST=${REGISTRY_HOST:-http://registry.local:9080}
     extra_hosts:
       - "registry.local:host-gateway"
     restart: unless-stopped
@@ -42,9 +75,12 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - VITE_REGISTRY_HOST=${REGISTRY_HOST:-registry.local}
+        - VITE_REGISTRY_PORT=${BACKEND_PORT:-9080}
     container_name: iac-registry-frontend
     ports:
-      - "3000:80"
+      - "${FRONTEND_PORT:-3000}:80"
     environment:
       - VITE_API_BASE_URL=${VITE_API_BASE_URL:-}
     depends_on:
@@ -54,6 +90,7 @@ services:
       - registry-network
 
 volumes:
+  postgres-data:
   registry-data:
   deployment-workdir:
 

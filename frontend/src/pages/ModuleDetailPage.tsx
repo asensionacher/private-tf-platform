@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Box, Tag, ExternalLink, Copy, RefreshCw, Check, Eye, EyeOff, Trash2, FileText } from 'lucide-react';
+import { ArrowLeft, Box, Tag, ExternalLink, RefreshCw, Eye, EyeOff, Trash2, FileText, Copy, Check, Terminal } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -31,8 +31,8 @@ export default function ModuleDetailPage() {
 
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [selectedVersion, setSelectedVersion] = useState<string | undefined>(undefined);
+  const [copied, setCopied] = useState(false);
 
   const { data: module, isLoading: moduleLoading } = useQuery({
     queryKey: ['module', id],
@@ -88,13 +88,6 @@ export default function ModuleDetailPage() {
     },
   });
 
-  const deleteVersionMutation = useMutation({
-    mutationFn: (versionId: string) => modulesApi.deleteVersion(id!, versionId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['module-versions', id] });
-    },
-  });
-
   const deleteModuleMutation = useMutation({
     mutationFn: () => modulesApi.delete(id!),
     onSuccess: () => {
@@ -107,6 +100,15 @@ export default function ModuleDetailPage() {
 
   const versions = Array.isArray(versionsData) ? versionsData : [];
   const enabledVersions = versions.filter(v => v.enabled);
+
+  // Get registry host from environment variable or fallback to current hostname
+  const registryHostFull = import.meta.env.VITE_REGISTRY_HOST || `${window.location.hostname}:${import.meta.env.VITE_REGISTRY_PORT || '9080'}`;
+  // Remove protocol for Terraform source and host blocks
+  const registryHost = registryHostFull.replace(/^https?:\/\//, '');
+  // Extract protocol and build full URL for service endpoints
+  const protocol = registryHostFull.startsWith('https') ? 'https' : 'http';
+  const serviceBaseUrl = registryHostFull.includes('://') ? registryHostFull : `${protocol}://${registryHost}`;
+  const moduleSource = module ? `${registryHost}/${module.namespace}/${module.name}/${module.provider}` : '';
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -177,9 +179,6 @@ export default function ModuleDetailPage() {
     );
   }
 
-  const host = window.location.hostname === 'localhost' ? `localhost.localdomain${window.location.port ? ':' + window.location.port : ''}` : window.location.host;
-  const moduleSource = `${host}/${module.namespace}/${module.name}/${module.provider}`;
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -212,37 +211,186 @@ export default function ModuleDetailPage() {
         </button>
       </div>
 
-      {/* Usage */}
-      <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-6">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Usage</h2>
-        {enabledVersions.length === 0 ? (
-          <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
-            <p className="text-sm text-yellow-700 dark:text-yellow-300">
-              No versions enabled yet. Sync tags from the repository and enable the versions you want to publish.
-            </p>
-          </div>
-        ) : (
-          <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 relative">
-            <button
-              onClick={() => copyToClipboard(`module "example" {\n  source  = "${moduleSource}"\n  version = "${enabledVersions[0]?.version || '1.0.0'}"\n}`)}
-              className="absolute top-2 right-2 p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
-              title="Copy to clipboard"
-            >
-              {copied ? (
-                <Check className="h-4 w-4 text-green-500" />
-              ) : (
-                <Copy className="h-4 w-4 text-gray-500" />
-              )}
-            </button>
-            <pre className="text-sm text-gray-700 dark:text-gray-300">
-              {`module "example" {
+      {/* Usage Examples */}
+      {enabledVersions.length > 0 && (
+        <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-6">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+            <Terminal className="h-5 w-5 text-indigo-500" />
+            Usage Example
+          </h2>
+          
+          <div className="space-y-6">
+            {/* Step 1: Configure .terraformrc */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="flex items-center justify-center w-7 h-7 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-sm font-bold">1</span>
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white">
+                  Configure Terraform CLI
+                </h3>
+              </div>
+              
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                Create or edit <code className="px-2 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs font-mono">~/.terraformrc</code> (Linux/macOS) 
+                or <code className="px-2 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs font-mono">%APPDATA%\terraform.rc</code> (Windows):
+              </p>
+
+              <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 relative group">
+                <button
+                  onClick={() => copyToClipboard(`host "${registryHost}" {\n  services = {\n    "modules.v1" = "${serviceBaseUrl}/v1/modules/"\n  }\n}\n\ncredentials "${registryHost}" {\n  token = "your-api-key-here"\n}`)}
+                  className="absolute top-3 right-3 p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Copy to clipboard"
+                >
+                  {copied ? (
+                    <Check className="h-4 w-4 text-green-500" />
+                  ) : (
+                    <Copy className="h-4 w-4 text-gray-500" />
+                  )}
+                </button>
+                <pre className="text-xs text-gray-800 dark:text-gray-200 overflow-x-auto font-mono">
+{`host "${registryHost}" {
+  services = {
+    "modules.v1" = "${serviceBaseUrl}/v1/modules/"
+  }
+}
+
+credentials "${registryHost}" {
+  token = "your-api-key-here"
+}`}
+                </pre>
+              </div>
+
+              <div className="mt-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                <div className="flex gap-2">
+                  <svg className="h-5 w-5 text-blue-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                  </svg>
+                  <div className="flex-1">
+                    <p className="text-xs text-blue-700 dark:text-blue-300">
+                      <strong>Get your API key:</strong> Go to <span className="font-semibold">API Keys</span> page to create a global API key, 
+                      or go to <span className="font-semibold">Namespaces → {module.namespace}</span> to create a namespace-specific key.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Step 2: Add to main.tf */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="flex items-center justify-center w-7 h-7 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-sm font-bold">2</span>
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white">
+                  Use Module in Your Terraform Configuration
+                </h3>
+              </div>
+
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                Add to your <code className="px-2 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs font-mono">main.tf</code>:
+              </p>
+
+              <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 relative group">
+                <button
+                  onClick={() => copyToClipboard(`module "${module.name}" {\n  source  = "${moduleSource}"\n  version = "${enabledVersions[0]?.version || '1.0.0'}"\n\n  # Module configuration\n  # Add your module inputs here\n}`)}
+                  className="absolute top-3 right-3 p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Copy to clipboard"
+                >
+                  {copied ? (
+                    <Check className="h-4 w-4 text-green-500" />
+                  ) : (
+                    <Copy className="h-4 w-4 text-gray-500" />
+                  )}
+                </button>
+                <pre className="text-xs text-gray-800 dark:text-gray-200 overflow-x-auto font-mono">
+{`module "${module.name}" {
   source  = "${moduleSource}"
   version = "${enabledVersions[0]?.version || '1.0.0'}"
+
+  # Module configuration
+  # Add your module inputs here
 }`}
-            </pre>
+                </pre>
+              </div>
+
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                💡 <strong>Tip:</strong> Use version constraints like <code className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">~&gt; 1.0</code> or <code className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">&gt;= 1.0.0, &lt; 2.0.0</code> for better version management.
+              </p>
+            </div>
+
+            {/* Step 3: Initialize */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="flex items-center justify-center w-7 h-7 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-sm font-bold">3</span>
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white">
+                  Initialize and Apply
+                </h3>
+              </div>
+
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                Run these commands in your terminal:
+              </p>
+
+              <div className="space-y-2">
+                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 relative group">
+                  <button
+                    onClick={() => copyToClipboard('terraform init')}
+                    className="absolute top-3 right-3 p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Copy to clipboard"
+                  >
+                    {copied ? (
+                      <Check className="h-4 w-4 text-green-500" />
+                    ) : (
+                      <Copy className="h-4 w-4 text-gray-500" />
+                    )}
+                  </button>
+                  <pre className="text-xs text-gray-800 dark:text-gray-200 font-mono">terraform init</pre>
+                </div>
+
+                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 relative group">
+                  <button
+                    onClick={() => copyToClipboard('terraform plan')}
+                    className="absolute top-3 right-3 p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Copy to clipboard"
+                  >
+                    {copied ? (
+                      <Check className="h-4 w-4 text-green-500" />
+                    ) : (
+                      <Copy className="h-4 w-4 text-gray-500" />
+                    )}
+                  </button>
+                  <pre className="text-xs text-gray-800 dark:text-gray-200 font-mono">terraform plan</pre>
+                </div>
+
+                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 relative group">
+                  <button
+                    onClick={() => copyToClipboard('terraform apply')}
+                    className="absolute top-3 right-3 p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Copy to clipboard"
+                  >
+                    {copied ? (
+                      <Check className="h-4 w-4 text-green-500" />
+                    ) : (
+                      <Copy className="h-4 w-4 text-gray-500" />
+                    )}
+                  </button>
+                  <pre className="text-xs text-gray-800 dark:text-gray-200 font-mono">terraform apply</pre>
+                </div>
+              </div>
+            </div>
+
+            {/* Additional Info */}
+            <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4">
+              <h4 className="text-sm font-semibold text-amber-800 dark:text-amber-200 mb-2">
+                📝 Local Development Setup
+              </h4>
+              <p className="text-xs text-amber-700 dark:text-amber-300 mb-2">
+                If running the registry locally, add this to your <code className="px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/40 rounded">/etc/hosts</code> file:
+              </p>
+              <div className="bg-amber-100 dark:bg-amber-900/40 rounded p-2">
+                <code className="text-xs font-mono text-amber-900 dark:text-amber-200">127.0.0.1 {registryHost}</code>
+              </div>
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Module Info */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -371,17 +519,6 @@ export default function ModuleDetailPage() {
                       ) : (
                         <EyeOff className="h-4 w-4" />
                       )}
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (confirm(`Delete version ${version.version}? This cannot be undone.`)) {
-                          deleteVersionMutation.mutate(version.id);
-                        }
-                      }}
-                      className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                      title="Delete version"
-                    >
-                      <Trash2 className="h-4 w-4" />
                     </button>
                   </div>
                 </li>

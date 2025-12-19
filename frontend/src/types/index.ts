@@ -65,10 +65,8 @@ export interface ModuleFromGitCreate {
   description?: string;
   subdir?: string;
   is_private?: boolean;
-  git_auth_type?: 'ssh' | 'https';
   git_username?: string;
   git_password?: string;
-  git_ssh_key?: string;
 }
 
 // Add version to existing module
@@ -125,10 +123,8 @@ export interface ProviderFromGitCreate {
   git_url: string;
   description?: string;
   is_private?: boolean;
-  git_auth_type?: 'ssh' | 'https';
   git_username?: string;
   git_password?: string;
-  git_ssh_key?: string;
 }
 
 export interface ProviderVersion {
@@ -206,7 +202,9 @@ export interface DeploymentRun {
   tool: 'terraform' | 'tofu';
   env_vars: Record<string, string>;
   tfvars_files: string[];
-  status: 'pending' | 'initializing' | 'planning' | 'awaiting_approval' | 'applying' | 'success' | 'failed' | 'cancelled';
+  init_flags?: string;
+  plan_flags?: string;
+  status: 'pending' | 'initializing' | 'planning' | 'awaiting_approval' | 'applying' | 'success' | 'failed' | 'cancelled' | 'running';
   init_log: string;
   plan_log: string;
   plan_output: string;
@@ -228,6 +226,8 @@ export interface DeploymentRunCreate {
   tool: 'terraform' | 'tofu';
   env_vars?: Record<string, string>;
   tfvars_files?: string[];
+  init_flags?: string;
+  plan_flags?: string;
 }
 
 export interface DeploymentRunApproval {
@@ -238,8 +238,8 @@ export interface DeploymentRunApproval {
 export interface DirectoryStatus {
   path: string;
   last_run?: DeploymentRun;
-  status: 'none' | 'success' | 'running' | 'failed' | 'initializing' | 'planning' | 'awaiting_approval' | 'applying' | 'cancelled';
-  status_color: 'blue' | 'green' | 'yellow' | 'red';
+  status: 'none' | 'pending' | 'success' | 'running' | 'failed' | 'initializing' | 'planning' | 'awaiting_approval' | 'applying' | 'cancelled';
+  status_color: 'blue' | 'green' | 'yellow' | 'red' | 'purple' | 'gray';
 }
 
 export interface ProviderPlatformCreate {

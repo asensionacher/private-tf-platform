@@ -58,7 +58,7 @@ func GetDeployment(c *gin.Context) {
 		SELECT d.id, d.namespace_id, d.name, d.description, d.git_url, d.created_at, d.updated_at, n.name as namespace
 		FROM deployments d
 		JOIN namespaces n ON d.namespace_id = n.id
-		WHERE d.id = ?
+		WHERE d.id = $1
 	`, id).Scan(&d.ID, &d.NamespaceID, &d.Name, &d.Description, &d.GitURL, &d.CreatedAt, &d.UpdatedAt, &d.Namespace)
 
 	if err != nil {
@@ -81,7 +81,7 @@ func CreateDeployment(c *gin.Context) {
 
 	// Validate Git URL format
 	if !isValidGitURL(input.GitURL) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Git URL. Must be a valid git repository URL (https:// or git@)"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Git URL. Must be a valid HTTPS git repository URL (e.g., https://github.com/org/repo.git)"})
 		return
 	}
 
@@ -111,7 +111,7 @@ func CreateDeployment(c *gin.Context) {
 
 	_, err := database.DB.Exec(`
 		INSERT INTO deployments (id, namespace_id, name, description, git_url, git_auth_type, git_auth_data, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`, deploymentID, input.NamespaceID, input.Name, input.Description, input.GitURL, authType, authData, now, now)
 
 	if err != nil {
@@ -129,7 +129,7 @@ func CreateDeployment(c *gin.Context) {
 		SELECT d.id, d.namespace_id, d.name, d.description, d.git_url, d.created_at, d.updated_at, n.name as namespace
 		FROM deployments d
 		JOIN namespaces n ON d.namespace_id = n.id
-		WHERE d.id = ?
+		WHERE d.id = $1
 	`, deploymentID).Scan(&deployment.ID, &deployment.NamespaceID, &deployment.Name, &deployment.Description, &deployment.GitURL, &deployment.CreatedAt, &deployment.UpdatedAt, &deployment.Namespace)
 
 	c.JSON(http.StatusCreated, deployment)
@@ -140,7 +140,7 @@ func CreateDeployment(c *gin.Context) {
 func DeleteDeployment(c *gin.Context) {
 	id := c.Param("id")
 
-	result, err := database.DB.Exec("DELETE FROM deployments WHERE id = ?", id)
+	result, err := database.DB.Exec("DELETE FROM deployments WHERE id = $1", id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -161,7 +161,7 @@ func GetDeploymentReferences(c *gin.Context) {
 
 	// Get deployment and its git URL
 	var gitURL string
-	err := database.DB.QueryRow("SELECT git_url FROM deployments WHERE id = ?", id).Scan(&gitURL)
+	err := database.DB.QueryRow("SELECT git_url FROM deployments WHERE id = $1", id).Scan(&gitURL)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
 		return
@@ -171,7 +171,7 @@ func GetDeploymentReferences(c *gin.Context) {
 	var auth *git.AuthConfig
 	var authType sql.NullString
 	var authDataStr sql.NullString
-	err = database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM deployments WHERE id = ?", id).Scan(&authType, &authDataStr)
+	err = database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM deployments WHERE id = $1", id).Scan(&authType, &authDataStr)
 	if err == nil && authType.Valid && authDataStr.Valid {
 		// Decrypt auth data
 		decryptedData, err := crypto.DecryptJSON(authDataStr.String)
@@ -227,7 +227,7 @@ func GetDeploymentDirectory(c *gin.Context) {
 
 	// Get deployment
 	var gitURL string
-	err := database.DB.QueryRow("SELECT git_url FROM deployments WHERE id = ?", id).Scan(&gitURL)
+	err := database.DB.QueryRow("SELECT git_url FROM deployments WHERE id = $1", id).Scan(&gitURL)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
 		return
@@ -237,7 +237,7 @@ func GetDeploymentDirectory(c *gin.Context) {
 	var auth *git.AuthConfig
 	var authType sql.NullString
 	var authDataStr sql.NullString
-	err = database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM deployments WHERE id = ?", id).Scan(&authType, &authDataStr)
+	err = database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM deployments WHERE id = $1", id).Scan(&authType, &authDataStr)
 	if err == nil && authType.Valid && authDataStr.Valid {
 		decryptedData, err := crypto.DecryptJSON(authDataStr.String)
 		if err == nil {
@@ -287,7 +287,7 @@ func CreateDeploymentRun(c *gin.Context) {
 
 	// Verify deployment exists
 	var gitURL, workingDirectory string
-	err := database.DB.QueryRow("SELECT git_url, working_directory FROM deployments WHERE id = ?", id).Scan(&gitURL, &workingDirectory)
+	err := database.DB.QueryRow("SELECT git_url, working_directory FROM deployments WHERE id = $1", id).Scan(&gitURL, &workingDirectory)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
 		return
@@ -309,9 +309,9 @@ func CreateDeploymentRun(c *gin.Context) {
 	tfvarsFilesJSON, _ := json.Marshal(input.TfvarsFiles)
 
 	_, err = database.DB.Exec(`
-		INSERT INTO deployment_runs (id, deployment_id, path, ref, tool, env_vars, tfvars_files, status, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-	`, runID, input.DeploymentID, deployPath, input.Ref, input.Tool, string(envVarsJSON), string(tfvarsFilesJSON), now)
+		INSERT INTO deployment_runs (id, deployment_id, path, ref, tool, env_vars, tfvars_files, init_flags, plan_flags, status, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10)
+	`, runID, input.DeploymentID, deployPath, input.Ref, input.Tool, string(envVarsJSON), string(tfvarsFilesJSON), input.InitFlags, input.PlanFlags, now)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -326,7 +326,7 @@ func CreateDeploymentRun(c *gin.Context) {
 	}
 
 	// Start the deployment asynchronously
-	go build.ExecuteDeploymentRun(runID, id, deployPath, input.Ref, input.Tool, input.EnvVars, input.TfvarsFiles)
+	go build.ExecuteDeploymentRun(runID, id, deployPath, input.Ref, input.Tool, input.EnvVars, input.TfvarsFiles, input.InitFlags, input.PlanFlags)
 
 	c.JSON(http.StatusCreated, run)
 }
@@ -343,14 +343,14 @@ func ListDeploymentRuns(c *gin.Context) {
 	if path != "" {
 		query = `
 			SELECT id FROM deployment_runs
-			WHERE deployment_id = ? AND path = ?
+			WHERE deployment_id = $1 AND path = $2
 			ORDER BY created_at DESC
 		`
 		args = []interface{}{id, path}
 	} else {
 		query = `
 			SELECT id FROM deployment_runs
-			WHERE deployment_id = ?
+			WHERE deployment_id = $1
 			ORDER BY created_at DESC
 		`
 		args = []interface{}{id}
@@ -385,8 +385,9 @@ func GetDirectoryStatus(c *gin.Context) {
 	id := c.Param("id")
 	path := c.Query("path")
 
+	// Normalize path: treat empty string and "." as the same
 	if path == "" {
-		path = ""
+		path = "."
 	}
 
 	var status models.DirectoryStatus
@@ -399,7 +400,7 @@ func GetDirectoryStatus(c *gin.Context) {
 	err := database.DB.QueryRow(`
 		SELECT id, deployment_id, path, ref, status, error_message, created_at, started_at, completed_at
 		FROM deployment_runs
-		WHERE deployment_id = ? AND path = ?
+		WHERE deployment_id = $1 AND path = $2
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, id, path).Scan(&run.ID, &run.DeploymentID, &run.Path, &run.Ref, &run.Status, &run.ErrorMessage, &run.CreatedAt, &run.StartedAt, &run.CompletedAt)
@@ -411,10 +412,14 @@ func GetDirectoryStatus(c *gin.Context) {
 		switch run.Status {
 		case "success":
 			status.StatusColor = "green"
-		case "running":
+		case "pending", "initializing", "planning", "applying":
 			status.StatusColor = "yellow"
+		case "awaiting_approval":
+			status.StatusColor = "purple"
 		case "failed":
 			status.StatusColor = "red"
+		case "cancelled":
+			status.StatusColor = "gray"
 		default:
 			status.StatusColor = "blue"
 		}
@@ -450,7 +455,7 @@ func ApproveDeploymentRun(c *gin.Context) {
 
 	// Check that run is in awaiting_approval state
 	var status string
-	err := database.DB.QueryRow(`SELECT status FROM deployment_runs WHERE id = ?`, runID).Scan(&status)
+	err := database.DB.QueryRow(`SELECT status FROM deployment_runs WHERE id = $1`, runID).Scan(&status)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Run not found"})
 		return
@@ -470,8 +475,8 @@ func ApproveDeploymentRun(c *gin.Context) {
 	now := time.Now()
 	_, err = database.DB.Exec(`
 		UPDATE deployment_runs 
-		SET approved_by = ?, approved_at = ?
-		WHERE id = ?
+		SET approved_by = $1, approved_at = $2
+		WHERE id = $3
 	`, approvedBy, now, runID)
 
 	if err != nil {
@@ -491,7 +496,7 @@ func CancelDeploymentRun(c *gin.Context) {
 	// Get the runner deployment ID
 	var workDir sql.NullString
 	var status string
-	err := database.DB.QueryRow(`SELECT work_dir, status FROM deployment_runs WHERE id = ?`, runID).Scan(&workDir, &status)
+	err := database.DB.QueryRow(`SELECT work_dir, status FROM deployment_runs WHERE id = $1`, runID).Scan(&workDir, &status)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Run not found"})
 		return
@@ -529,8 +534,8 @@ func CancelDeploymentRun(c *gin.Context) {
 	now := time.Now()
 	result, err := database.DB.Exec(`
 		UPDATE deployment_runs 
-		SET status = 'cancelled', error_message = 'Cancelled by user', completed_at = ?
-		WHERE id = ?
+		SET status = 'cancelled', error_message = 'Cancelled by user', completed_at = $1
+		WHERE id = $2
 	`, now, runID)
 
 	if err != nil {
@@ -548,20 +553,58 @@ func CancelDeploymentRun(c *gin.Context) {
 	c.JSON(http.StatusOK, run)
 }
 
+// DeleteDeploymentRun deletes a deployment run
+// DELETE /api/deployments/:id/runs/:runId
+func DeleteDeploymentRun(c *gin.Context) {
+	runID := c.Param("runId")
+
+	// Check if run exists and get its status
+	var status string
+	err := database.DB.QueryRow(`SELECT status FROM deployment_runs WHERE id = $1`, runID).Scan(&status)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Run not found"})
+		return
+	}
+
+	// Don't allow deletion of active runs
+	activeStatuses := []string{"pending", "initializing", "planning", "awaiting_approval", "applying"}
+	for _, s := range activeStatuses {
+		if status == s {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot delete an active run. Please cancel it first."})
+			return
+		}
+	}
+
+	// Delete the run
+	result, err := database.DB.Exec(`DELETE FROM deployment_runs WHERE id = $1`, runID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Run not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Run deleted successfully"})
+}
+
 // getDeploymentRun is a helper to fetch a deployment run with all fields
 func getDeploymentRun(runID string) (*models.DeploymentRun, error) {
 	var run models.DeploymentRun
-	var envVarsJSON, tfvarsFilesJSON, initLog, planLog, planOutput, applyLog, applyOutput, workDir, approvedBy sql.NullString
+	var envVarsJSON, tfvarsFilesJSON, initLog, planLog, planOutput, applyLog, applyOutput, workDir, approvedBy, initFlags, planFlags sql.NullString
 
 	err := database.DB.QueryRow(`
-		SELECT id, deployment_id, path, ref, tool, env_vars, tfvars_files, status, 
+		SELECT id, deployment_id, path, ref, tool, env_vars, tfvars_files, init_flags, plan_flags, status, 
 		       init_log, plan_log, plan_output, apply_log, apply_output, error_message, work_dir,
 		       approved_by, approved_at, created_at, started_at, completed_at
 		FROM deployment_runs
-		WHERE id = ?
+		WHERE id = $1
 	`, runID).Scan(
 		&run.ID, &run.DeploymentID, &run.Path, &run.Ref, &run.Tool,
-		&envVarsJSON, &tfvarsFilesJSON, &run.Status, &initLog, &planLog, &planOutput, &applyLog, &applyOutput,
+		&envVarsJSON, &tfvarsFilesJSON, &initFlags, &planFlags, &run.Status, &initLog, &planLog, &planOutput, &applyLog, &applyOutput,
 		&run.ErrorMessage, &workDir, &approvedBy, &run.ApprovedAt,
 		&run.CreatedAt, &run.StartedAt, &run.CompletedAt,
 	)
@@ -606,6 +649,12 @@ func getDeploymentRun(runID string) (*models.DeploymentRun, error) {
 	if approvedBy.Valid {
 		run.ApprovedBy = &approvedBy.String
 	}
+	if initFlags.Valid {
+		run.InitFlags = initFlags.String
+	}
+	if planFlags.Valid {
+		run.PlanFlags = planFlags.String
+	}
 
 	return &run, nil
 }
@@ -617,7 +666,7 @@ func StreamDeploymentRunLogs(c *gin.Context) {
 
 	// Get the runner deployment ID (stored in work_dir)
 	var workDir sql.NullString
-	err := database.DB.QueryRow(`SELECT work_dir FROM deployment_runs WHERE id = ?`, runID).Scan(&workDir)
+	err := database.DB.QueryRow(`SELECT work_dir FROM deployment_runs WHERE id = $1`, runID).Scan(&workDir)
 	if err != nil || !workDir.Valid {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Run not found or not started"})
 		return
@@ -686,7 +735,7 @@ func GetTfvarsFiles(c *gin.Context) {
 
 	// Get deployment
 	var gitURL string
-	err := database.DB.QueryRow("SELECT git_url FROM deployments WHERE id = ?", id).Scan(&gitURL)
+	err := database.DB.QueryRow("SELECT git_url FROM deployments WHERE id = $1", id).Scan(&gitURL)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
 		return
@@ -696,7 +745,7 @@ func GetTfvarsFiles(c *gin.Context) {
 	var auth *git.AuthConfig
 	var authType sql.NullString
 	var authDataStr sql.NullString
-	err = database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM deployments WHERE id = ?", id).Scan(&authType, &authDataStr)
+	err = database.DB.QueryRow("SELECT git_auth_type, git_auth_data FROM deployments WHERE id = $1", id).Scan(&authType, &authDataStr)
 	if err == nil && authType.Valid && authDataStr.Valid {
 		decryptedData, err := crypto.DecryptJSON(authDataStr.String)
 		if err == nil {

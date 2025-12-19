@@ -1,5 +1,11 @@
 FROM node:20-alpine AS builder
 
+# Build arguments for Vite environment variables
+ARG VITE_REGISTRY_HOST=registry.local
+ARG VITE_REGISTRY_PORT=9080
+ENV VITE_REGISTRY_HOST=$VITE_REGISTRY_HOST
+ENV VITE_REGISTRY_PORT=$VITE_REGISTRY_PORT
+
 WORKDIR /app
 
 # Install pnpm

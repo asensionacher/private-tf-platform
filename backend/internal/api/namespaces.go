@@ -48,7 +48,7 @@ func InitRunnerAPIKey() error {
 
 	_, err = database.DB.Exec(`
 		INSERT INTO api_keys (id, name, key_hash, permissions, created_at)
-		VALUES (?, '__runner__', ?, 'admin', ?)
+		VALUES ($1, '__runner__', $2, 'admin', $3)
 	`, id, keyHash, now)
 
 	if err != nil {
@@ -97,7 +97,7 @@ func TerraformAuthMiddleware() gin.HandlerFunc {
 
 		// Check if namespace is public
 		var isPublic bool
-		err := database.DB.QueryRow("SELECT is_public FROM namespaces WHERE name = ?", namespace).Scan(&isPublic)
+		err := database.DB.QueryRow("SELECT is_public FROM namespaces WHERE name = $1", namespace).Scan(&isPublic)
 		if err != nil {
 			// Namespace not found - let the handler deal with it
 			c.Next()
@@ -147,7 +147,7 @@ func TerraformAuthMiddleware() gin.HandlerFunc {
 		err = database.DB.QueryRow(`
 			SELECT id, name, permissions, expires_at
 			FROM api_keys
-			WHERE key_hash = ?
+			WHERE key_hash = $1
 		`, keyHash).Scan(&apiKey.ID, &apiKey.Name, &apiKey.Permissions, &expiresAt)
 
 		if err == sql.ErrNoRows {
@@ -174,7 +174,7 @@ func TerraformAuthMiddleware() gin.HandlerFunc {
 		}
 
 		// Update last used timestamp
-		database.DB.Exec("UPDATE api_keys SET last_used_at = ? WHERE id = ?", time.Now(), apiKey.ID)
+		database.DB.Exec("UPDATE api_keys SET last_used_at = $1 WHERE id = $2", time.Now(), apiKey.ID)
 
 		c.Next()
 	}
@@ -226,7 +226,7 @@ func GetNamespace(c *gin.Context) {
 		SELECT n.id, n.name, n.description, n.is_public, n.created_at, n.updated_at,
 			   (SELECT COUNT(*) FROM modules WHERE namespace_id = n.id) as module_count,
 			   (SELECT COUNT(*) FROM providers WHERE namespace_id = n.id) as provider_count
-		FROM namespaces n WHERE n.id = ?
+		FROM namespaces n WHERE n.id = $1
 	`, id).Scan(&ns.ID, &ns.Name, &description, &ns.IsPublic, &ns.CreatedAt, &ns.UpdatedAt, &ns.ModuleCount, &ns.ProviderCount)
 
 	if err == sql.ErrNoRows {
@@ -257,7 +257,7 @@ func CreateNamespace(c *gin.Context) {
 
 	_, err := database.DB.Exec(`
 		INSERT INTO namespaces (id, name, description, is_public, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6)
 	`, id, input.Name, input.Description, input.IsPublic, now, now)
 
 	if err != nil {
@@ -296,15 +296,15 @@ func UpdateNamespace(c *gin.Context) {
 	args := []interface{}{}
 
 	if input.Name != nil {
-		updates = append(updates, "name = ?")
+		updates = append(updates, "name = $1")
 		args = append(args, *input.Name)
 	}
 	if input.Description != nil {
-		updates = append(updates, "description = ?")
+		updates = append(updates, "description = $1")
 		args = append(args, *input.Description)
 	}
 	if input.IsPublic != nil {
-		updates = append(updates, "is_public = ?")
+		updates = append(updates, "is_public = $1")
 		args = append(args, *input.IsPublic)
 	}
 
@@ -313,11 +313,11 @@ func UpdateNamespace(c *gin.Context) {
 		return
 	}
 
-	updates = append(updates, "updated_at = ?")
+	updates = append(updates, "updated_at = $1")
 	args = append(args, time.Now())
 	args = append(args, id)
 
-	query := "UPDATE namespaces SET " + strings.Join(updates, ", ") + " WHERE id = ?"
+	query := "UPDATE namespaces SET " + strings.Join(updates, ", ") + " WHERE id = $1"
 	result, err := database.DB.Exec(query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -333,7 +333,7 @@ func UpdateNamespace(c *gin.Context) {
 	// Fetch updated namespace
 	var ns models.Namespace
 	var description sql.NullString
-	database.DB.QueryRow("SELECT id, name, description, is_public, created_at, updated_at FROM namespaces WHERE id = ?", id).Scan(
+	database.DB.QueryRow("SELECT id, name, description, is_public, created_at, updated_at FROM namespaces WHERE id = $1", id).Scan(
 		&ns.ID, &ns.Name, &description, &ns.IsPublic, &ns.CreatedAt, &ns.UpdatedAt,
 	)
 	if description.Valid {
@@ -349,21 +349,21 @@ func DeleteNamespace(c *gin.Context) {
 
 	// Check if namespace has modules or providers
 	var count int
-	database.DB.QueryRow("SELECT COUNT(*) FROM modules WHERE namespace_id = ?", id).Scan(&count)
+	database.DB.QueryRow("SELECT COUNT(*) FROM modules WHERE namespace_id = $1", id).Scan(&count)
 	if count > 0 {
 		c.JSON(http.StatusConflict, gin.H{"error": "Namespace has modules. Delete modules first."})
 		return
 	}
-	database.DB.QueryRow("SELECT COUNT(*) FROM providers WHERE namespace_id = ?", id).Scan(&count)
+	database.DB.QueryRow("SELECT COUNT(*) FROM providers WHERE namespace_id = $1", id).Scan(&count)
 	if count > 0 {
 		c.JSON(http.StatusConflict, gin.H{"error": "Namespace has providers. Delete providers first."})
 		return
 	}
 
 	// Delete API keys first
-	database.DB.Exec("DELETE FROM api_keys WHERE namespace_id = ?", id)
+	database.DB.Exec("DELETE FROM api_keys WHERE namespace_id = $1", id)
 
-	result, err := database.DB.Exec("DELETE FROM namespaces WHERE id = ?", id)
+	result, err := database.DB.Exec("DELETE FROM namespaces WHERE id = $1", id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -440,7 +440,7 @@ func CreateAPIKey(c *gin.Context) {
 	// Create global API key with admin permissions
 	_, err = database.DB.Exec(`
 		INSERT INTO api_keys (id, name, key_hash, permissions, created_at)
-		VALUES (?, ?, ?, 'admin', ?)
+		VALUES ($1, $2, $3, 'admin', $4)
 	`, id, input.Name, keyHash, now)
 
 	if err != nil {
@@ -465,7 +465,7 @@ func DeleteAPIKey(c *gin.Context) {
 
 	// Check if it's the runner API key
 	var name string
-	err := database.DB.QueryRow("SELECT name FROM api_keys WHERE id = ?", keyID).Scan(&name)
+	err := database.DB.QueryRow("SELECT name FROM api_keys WHERE id = $1", keyID).Scan(&name)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "API key not found"})
 		return
@@ -476,7 +476,7 @@ func DeleteAPIKey(c *gin.Context) {
 		return
 	}
 
-	result, err := database.DB.Exec("DELETE FROM api_keys WHERE id = ?", keyID)
+	result, err := database.DB.Exec("DELETE FROM api_keys WHERE id = $1", keyID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

@@ -20,12 +20,21 @@ export default function DeploymentsPage() {
     });
 
     useEffect(() => {
-        loadData();
+        loadData(true); // Show loading on initial load
+        
+        // Auto-refresh every 5 seconds to keep deployment statuses updated
+        const interval = setInterval(() => {
+            loadData(false); // Don't show loading spinner on auto-refresh
+        }, 5000);
+
+        return () => clearInterval(interval);
     }, []);
 
-    const loadData = async () => {
+    const loadData = async (showLoading = true) => {
         try {
-            setLoading(true);
+            if (showLoading) {
+                setLoading(true);
+            }
             const [deploymentsData, namespacesData] = await Promise.all([
                 deploymentsApi.getAll(),
                 namespacesApi.getAll(),
@@ -36,7 +45,9 @@ export default function DeploymentsPage() {
         } catch (err: any) {
             setError(err.response?.data?.error || 'Failed to load deployments');
         } finally {
-            setLoading(false);
+            if (showLoading) {
+                setLoading(false);
+            }
         }
     };
 

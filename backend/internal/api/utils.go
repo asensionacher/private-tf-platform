@@ -11,18 +11,10 @@ func generateID() string {
 	return uuid.New().String()
 }
 
-// isValidGitURL validates that the URL is a valid Git repository URL
+// isValidGitURL validates that the URL is a valid Git repository URL (HTTPS only)
 func isValidGitURL(url string) bool {
-	// Accept https:// URLs
+	// Only accept https:// URLs
 	if strings.HasPrefix(url, "https://") {
-		return true
-	}
-	// Accept git@ SSH URLs
-	if strings.HasPrefix(url, "git@") {
-		return true
-	}
-	// Accept git:// URLs
-	if strings.HasPrefix(url, "git://") {
 		return true
 	}
 	return false

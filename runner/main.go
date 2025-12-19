@@ -27,16 +27,18 @@ type DeploymentRequest struct {
 	Path        string            `json:"path"`                       // Path within repo (default: root)
 	EnvVars     map[string]string `json:"env_vars"`                   // Environment variables
 	TfvarsFiles []string          `json:"tfvars_files"`               // List of .tfvars files to use
+	InitFlags   string            `json:"init_flags"`                 // Custom flags for terraform init
+	PlanFlags   string            `json:"plan_flags"`                 // Custom flags for terraform plan
 	Timeout     int               `json:"timeout"`                    // Timeout in minutes (default: 60)
 	GitAuth     *GitAuth          `json:"git_auth,omitempty"`         // Git authentication
 	AutoApprove bool              `json:"auto_approve"`               // Auto-approve terraform apply
 }
 
-// GitAuth represents git authentication credentials
+// GitAuth represents git authentication credentials (HTTPS only)
 type GitAuth struct {
-	Type     string `json:"type"`               // "http", "ssh"
-	Username string `json:"username,omitempty"` // For HTTP auth
-	Password string `json:"password,omitempty"` // For HTTP auth or SSH key passphrase
+	Type     string `json:"type"`               // "https" (SSH not supported)
+	Username string `json:"username,omitempty"` // For HTTPS auth
+	Password string `json:"password,omitempty"` // For HTTPS auth (token or password)
 }
 
 // DeploymentResponse represents the deployment response
@@ -345,7 +347,15 @@ func executeDeployment(deployment *Deployment) {
 	}
 	deployment.updateStatus("running", "init", "")
 	deployment.log("Running terraform init...")
-	initLog, err := runTerraformCommand(deployment, deployPath, "init", nil)
+
+	// Parse custom init flags
+	var initArgs []string
+	if deployment.Request.InitFlags != "" {
+		initArgs = parseShellArgs(deployment.Request.InitFlags)
+		deployment.log(fmt.Sprintf("Using custom init flags: %s", deployment.Request.InitFlags))
+	}
+
+	initLog, err := runTerraformCommand(deployment, deployPath, "init", initArgs)
 	deployment.Status.InitLog = initLog
 	if err != nil {
 		deployment.updateStatus("failed", "init", fmt.Sprintf("Init failed: %v", err))
@@ -359,6 +369,14 @@ func executeDeployment(deployment *Deployment) {
 	deployment.updateStatus("running", "plan", "")
 	deployment.log("Running terraform plan...")
 	planArgs := []string{"-out=tfplan"}
+
+	// Add custom plan flags
+	if deployment.Request.PlanFlags != "" {
+		customFlags := parseShellArgs(deployment.Request.PlanFlags)
+		planArgs = append(planArgs, customFlags...)
+		deployment.log(fmt.Sprintf("Using custom plan flags: %s", deployment.Request.PlanFlags))
+	}
+
 	// Add tfvars files
 	for _, tfvarsFile := range deployment.Request.TfvarsFiles {
 		planArgs = append(planArgs, "-var-file="+tfvarsFile)
@@ -473,8 +491,8 @@ func runTerraformCommand(deployment *Deployment, workDir, command string, args [
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 	}
 
-	// Configure private registry if REGISTRY_URL is set
-	if registryURL := os.Getenv("REGISTRY_URL"); registryURL != "" {
+	// Configure private registry if REGISTRY_HOST is set
+	if registryURL := os.Getenv("REGISTRY_HOST"); registryURL != "" {
 		terraformrcPath := filepath.Join(workDir, ".terraformrc")
 		if err := configureTerraformRegistry(workDir, registryURL); err != nil {
 			deployment.log(fmt.Sprintf("Warning: Failed to configure private registry: %v", err))
@@ -594,4 +612,51 @@ func fetchRegistryToken(registryURL string) (string, error) {
 	}
 
 	return result.Token, nil
+}
+
+// parseShellArgs parses a command-line string into arguments, respecting quotes
+func parseShellArgs(s string) []string {
+	var args []string
+	var current strings.Builder
+	var inQuote rune
+
+	for i := 0; i < len(s); i++ {
+		c := rune(s[i])
+
+		switch {
+		case inQuote != 0:
+			// Inside quotes
+			if c == inQuote {
+				inQuote = 0
+			} else if c == '\\' && i+1 < len(s) {
+				// Handle escape sequences
+				i++
+				current.WriteRune(rune(s[i]))
+			} else {
+				current.WriteRune(c)
+			}
+		case c == '"' || c == '\'':
+			// Start quote
+			inQuote = c
+		case c == ' ' || c == '\t' || c == '\n':
+			// Whitespace - end current arg
+			if current.Len() > 0 {
+				args = append(args, current.String())
+				current.Reset()
+			}
+		case c == '\\' && i+1 < len(s):
+			// Escape sequence outside quotes
+			i++
+			current.WriteRune(rune(s[i]))
+		default:
+			current.WriteRune(c)
+		}
+	}
+
+	// Add last argument
+	if current.Len() > 0 {
+		args = append(args, current.String())
+	}
+
+	return args
 }
