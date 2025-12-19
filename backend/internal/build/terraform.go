@@ -146,7 +146,7 @@ WHERE id = $1
 }
 
 func pollRunnerStatus(runID, runnerDeploymentID, runnerURL string) {
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(500 * time.Millisecond) // Poll every 500ms for near-real-time updates
 	defer ticker.Stop()
 
 	timeout := time.After(2 * time.Hour)

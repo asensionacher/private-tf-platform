@@ -559,9 +559,13 @@ func configureTerraformRegistry(workDir, registryURL string) error {
 	// Create .terraformrc in the work directory
 	terraformrcPath := filepath.Join(workDir, ".terraformrc")
 
-	// Parse registry URL to get host
-	registryHost := strings.TrimPrefix(registryURL, "http://")
-	registryHost = strings.TrimPrefix(registryHost, "https://")
+	// Parse registry URL to get host (with port for full URL, without port for host block)
+	registryHostWithPort := strings.TrimPrefix(registryURL, "http://")
+	registryHostWithPort = strings.TrimPrefix(registryHostWithPort, "https://")
+
+	// Extract hostname without port for host and credentials blocks
+	// This allows module sources like "registry.local/namespace/module" to work
+	registryHostname := strings.Split(registryHostWithPort, ":")[0]
 
 	// Fetch token from backend (this token will work for all private namespaces from runner)
 	token, err := fetchRegistryToken(registryURL)
@@ -572,6 +576,8 @@ func configureTerraformRegistry(workDir, registryURL string) error {
 	}
 
 	// Configure .terraformrc with single credential for the entire registry
+	// Note: host block uses hostname only (no port) to match module source format
+	// Service URLs use full registryURL with protocol and port
 	content := fmt.Sprintf(`# Terraform Registry Configuration
 # Single credential for both public namespaces and runner access to private namespaces
 
@@ -586,7 +592,7 @@ host "%s" {
     "providers.v1" = "%s/v1/providers/"
   }
 }
-`, registryHost, token, registryHost, registryURL, registryURL)
+`, registryHostname, token, registryHostname, registryURL, registryURL)
 
 	return os.WriteFile(terraformrcPath, []byte(content), 0644)
 }

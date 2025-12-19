@@ -21,7 +21,7 @@ export default function DeploymentRunDetailPage() {
         loadRun(true); // Show loading spinner on first load
     }, [id, runId]);
 
-    // Auto-refresh polling when run is active
+    // Auto-refresh polling when run is active - aggressive polling for near-real-time updates
     useEffect(() => {
         const activeStatuses = ['pending', 'initializing', 'planning', 'awaiting_approval', 'applying'];
         if (!run || !activeStatuses.includes(run.status)) {
@@ -30,7 +30,7 @@ export default function DeploymentRunDetailPage() {
 
         const interval = setInterval(() => {
             loadRun(false); // Don't show loading spinner on auto-refresh
-        }, 2000); // Poll every 2 seconds for live updates
+        }, 1000); // Poll every 1 second for near-real-time log updates
 
         return () => clearInterval(interval);
     }, [run?.status, id, runId]);
