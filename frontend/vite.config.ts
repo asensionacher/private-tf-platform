@@ -16,6 +16,22 @@ export default defineConfig({
         target: 'http://localhost:9080',
         changeOrigin: true,
       },
+      '/v1': {
+        target: 'http://localhost:9080',
+        changeOrigin: true,
+      },
+      '/.well-known': {
+        target: 'http://localhost:9080',
+        changeOrigin: true,
+      },
+      '/downloads': {
+        target: 'http://localhost:9080',
+        changeOrigin: true,
+      },
+      '/shasums': {
+        target: 'http://localhost:9080',
+        changeOrigin: true,
+      },
     },
   },
 })

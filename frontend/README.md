@@ -62,8 +62,8 @@ frontend/
 │   ├── index.css             # Global styles and Tailwind directives
 │   ├── main.tsx              # Application entry point
 │   └── vite-env.d.ts         # Vite type declarations
-├── Dockerfile                # Multi-stage Docker build with nginx
-├── nginx.conf                # Nginx configuration for production
+├── Dockerfile                # Docker build using Node.js serve
+├── serve.json                # serve configuration for SPA routing
 ├── package.json              # Dependencies and scripts
 ├── pnpm-lock.yaml            # pnpm lock file
 ├── postcss.config.js         # PostCSS configuration
@@ -195,12 +195,10 @@ docker build -t iac-frontend \
   .
 
 # Run
-docker run -d -p 3000:80 --name iac-frontend iac-frontend
+docker run -d -p 3000:3000 --name iac-frontend iac-frontend
 ```
 
-The Dockerfile uses a multi-stage build:
-1. **Stage 1**: Build React app with Vite
-2. **Stage 2**: Serve with nginx
+The Dockerfile builds the React app with Vite and serves it using the lightweight `serve` package (Node.js-based static server).
 
 ## Configuration
 
@@ -214,20 +212,38 @@ Build-time variables (used during `vite build`):
 | `VITE_REGISTRY_PORT` | `9080` | Backend API port |
 | `VITE_API_BASE_URL` | `/api` | API base path (optional) |
 
-Runtime variables (for nginx container):
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NGINX_PORT` | `80` | nginx listening port |
+Runtime configuration:
+The frontend connects directly to the backend API. No additional runtime variables needed.
 
 ### Vite Configuration
 
-Development proxy (`vite.config.ts` lines 14-19):
+Development proxy (`vite.config.ts`):
 ```typescript
 server: {
   port: 5173,
   proxy: {
     '/api': {
+      target: 'http://localhost:9080',
+      changeOrigin: true,
+    },
+    '/v1': {
+      target: 'http://localhost:9080',
+      changeOrigin: true,
+    },
+    '/.well-known': {
+      target: 'http://localhost:9080',
+      changeOrigin: true,
+    },
+    '/downloads': {
+      target: 'http://localhost:9080',
+      changeOrigin: true,
+    },
+    '/shasums': {
+      target: 'http://localhost:9080',
+      changeOrigin: true,
+    },
+  },
+}
       target: 'http://localhost:9080',
       changeOrigin: true,
     },
@@ -469,14 +485,15 @@ The production build:
 - Optimizes images and assets
 - Code-splits by route
 
-### nginx Configuration
+### Production Serving
 
-The included `nginx.conf`:
-- Serves static files from `/usr/share/nginx/html`
-- Proxies `/api/*` requests to backend
+The frontend uses the `serve` package with `serve.json` configuration:
+- Serves static files from the `dist` directory
 - Handles client-side routing (SPA fallback)
-- Enables gzip compression
-- Sets proper caching headers
+- Lightweight Node.js-based server (no nginx required)
+- Listens on port 3000
+
+**Note**: The frontend serves only static files. All API requests go directly to the backend (port 9080) configured via CORS in the backend.
 
 ### Environment-specific Builds
 
@@ -496,12 +513,12 @@ VITE_REGISTRY_HOST=https://registry.company.com pnpm build
 ### Checklist
 
 - [ ] Set correct `VITE_REGISTRY_HOST` for your environment
-- [ ] Update nginx `proxy_pass` in `nginx.conf` if backend is remote
-- [ ] Enable SSL/TLS in nginx or reverse proxy
+- [ ] Ensure backend CORS settings allow frontend origin
+- [ ] Configure SSL/TLS in a reverse proxy (if needed)
 - [ ] Configure CSP headers for security
 - [ ] Set up CDN for static assets (optional)
 - [ ] Enable monitoring and error tracking
-- [ ] Test all routes work with nginx SPA fallback
+- [ ] Test all routes work with SPA routing
 
 ## Browser Support
 

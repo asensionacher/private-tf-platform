@@ -32,17 +32,17 @@ services:
     environment:
       - GIN_MODE=release
       - PORT=${BACKEND_PORT:-9080}
-      - BACKEND_HOST=${BACKEND_HOST:-localhost}
-      - FRONTEND_HOST=${FRONTEND_HOST:-localhost}
+      - BACKEND_HOST=${REGISTRY_HOST:-registry.local}
+      - FRONTEND_HOST=${REGISTRY_HOST:-registry.local}
       - FRONTEND_PORT=${FRONTEND_PORT:-3000}
-      - VITE_DEV_PORT=${VITE_DEV_PORT:-5173}
+      - VITE_DEV_PORT=5173
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=registry
       - POSTGRES_USER=registry
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-registry-password-change-me}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-to-a-secure-32-char-key!}
-      - RUNNER_URL=${RUNNER_URL:-http://runner:8080}
+      - RUNNER_URL=http://runner:8080
       - REGISTRY_HOST=${REGISTRY_HOST:-registry.local}
     restart: unless-stopped
     networks:
@@ -63,10 +63,10 @@ services:
     volumes:
       - deployment-workdir:/tmp/iac-deployments
     environment:
-      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
-      - REGISTRY_HOST=${REGISTRY_HOST:-http://registry.local:9080}
+      - ALLOWED_ORIGINS=*
+      - REGISTRY_HOST=http://${REGISTRY_HOST:-registry.local}:${BACKEND_PORT:-9080}
     extra_hosts:
-      - "registry.local:host-gateway"
+      - "${REGISTRY_HOST:-registry.local}:host-gateway"
     restart: unless-stopped
     networks:
       - registry-network
@@ -78,11 +78,12 @@ services:
       args:
         - VITE_REGISTRY_HOST=${REGISTRY_HOST:-registry.local}
         - VITE_REGISTRY_PORT=${BACKEND_PORT:-9080}
+        - VITE_API_BASE_URL=http://localhost:${BACKEND_PORT:-9080}/api
     container_name: iac-registry-frontend
     ports:
-      - "${FRONTEND_PORT:-3000}:80"
+      - "${FRONTEND_PORT:-3000}:3000"
     environment:
-      - VITE_API_BASE_URL=${VITE_API_BASE_URL:-}
+      - PORT=3000
     depends_on:
       - backend
     restart: unless-stopped
