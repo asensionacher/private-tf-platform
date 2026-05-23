@@ -1,0 +1,92 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: iac-registry-postgres
+    ports:
+      - "${POSTGRES_PORT_EXTERNAL:-5432}:5432"
+    environment:
+      - POSTGRES_DB=registry
+      - POSTGRES_USER=registry
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-registry-password-change-me}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - registry-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U registry"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: iac-registry-backend
+    volumes:
+      - registry-data:/app/data
+    environment:
+      - GIN_MODE=release
+      - PORT=9080
+      - BACKEND_HOST=api.${REGISTRY_HOST:-registry.lan}
+      - FRONTEND_HOST=${REGISTRY_HOST:-registry.lan}
+      - FRONTEND_PORT=443
+      - VITE_DEV_PORT=5173
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=registry
+      - POSTGRES_USER=registry
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-registry-password-change-me}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-to-a-secure-32-char-key!}
+      - REGISTRY_HOST=api.${REGISTRY_HOST:-registry.lan}
+    restart: unless-stopped
+    networks:
+      - registry-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_REGISTRY_HOST=api.${REGISTRY_HOST:-registry.lan}
+        - VITE_REGISTRY_PORT=443
+        - VITE_API_BASE_URL=https://api.${REGISTRY_HOST:-registry.lan}/api
+    container_name: iac-registry-frontend
+    environment:
+      - PORT=3000
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - registry-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: iac-registry-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - REGISTRY_HOST=${REGISTRY_HOST:-registry.lan}
+    volumes:
+      - ./nginx/nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    command: sh -c "envsubst '$$REGISTRY_HOST' < /etc/nginx/templates/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g 'daemon off;'"
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+    networks:
+      - registry-network
+
+volumes:
+  postgres-data:
+  registry-data:
+
+networks:
+  registry-network:
+    driver: bridge

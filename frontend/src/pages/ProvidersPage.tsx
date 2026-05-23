@@ -1,0 +1,401 @@
+import { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
+import { Puzzle, ChevronRight, Plus, X, GitBranch } from 'lucide-react';
+import { providersApi, namespacesApi } from '../api';
+import type { Provider, ProviderFromGitCreate } from '../types';
+
+export default function ProvidersPage() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [formData, setFormData] = useState<Partial<ProviderFromGitCreate>>({
+    name: '',
+    git_url: '',
+    description: '',
+  });
+  const [error, setError] = useState<string | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [gitUrlError, setGitUrlError] = useState<string | null>(null);
+
+  const validateProviderName = (name: string): string | null => {
+    if (!name) return null;
+    // Strip the prefix before validating — the backend will do the same
+    const shortName = name.startsWith('terraform-provider-')
+      ? name.slice('terraform-provider-'.length)
+      : name;
+    if (!shortName) return 'Name cannot be only the "terraform-provider-" prefix';
+    if (/[A-Z]/.test(shortName)) return 'Must be lowercase only';
+    if (/[^a-z0-9-]/.test(shortName)) return 'Only lowercase letters, digits, and hyphens are allowed';
+    if (shortName.startsWith('-')) return 'Must not start with a hyphen';
+    if (shortName.endsWith('-')) return 'Must not end with a hyphen';
+    if (/--/.test(shortName)) return 'Consecutive hyphens are not allowed';
+    if (!/^[a-z]/.test(shortName)) return 'Must start with a lowercase letter';
+    return null;
+  };
+
+  const isValidProviderName = (name: string): boolean => validateProviderName(name) === null;
+
+  const isValidGitUrl = (url: string): boolean => {
+    try {
+      const parsed = new URL(url);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  };
+
+  const { data: providersData, isLoading } = useQuery({
+    queryKey: ['providers'],
+    queryFn: () => providersApi.getAll(),
+  });
+
+  const providers = Array.isArray(providersData) ? providersData : [];
+
+  // Check if there are any providers still syncing
+  const hasSyncingProviders = providers.some(p => !p.synced);
+
+  // Auto-refresh when there are syncing providers
+  useEffect(() => {
+    if (hasSyncingProviders) {
+      const interval = setInterval(() => {
+        queryClient.invalidateQueries({ queryKey: ['providers'] });
+      }, 3000); // Check every 3 seconds
+
+      return () => clearInterval(interval);
+    }
+  }, [hasSyncingProviders, queryClient]);
+
+  const { data: namespacesData } = useQuery({
+    queryKey: ['namespaces'],
+    queryFn: () => namespacesApi.getAll(),
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (data: ProviderFromGitCreate) => providersApi.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['providers'] });
+      setShowCreateModal(false);
+      setFormData({
+        name: '',
+        git_url: '',
+        description: '',
+      });
+      setError(null);
+      setNameError(null);
+      setGitUrlError(null);
+    },
+    onError: (err: any) => {
+      setError(err.response?.data?.error || 'Failed to create provider');
+    },
+  });
+
+  const namespaces = Array.isArray(namespacesData) ? namespacesData : [];
+
+  // Group providers by namespace
+  const providersByNamespace = providers.reduce((acc, prov) => {
+    const ns = prov.namespace || 'default';
+    if (!acc[ns]) acc[ns] = [];
+    acc[ns].push(prov);
+    return acc;
+  }, {} as Record<string, Provider[]>);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.namespace_id || !formData.name || !formData.git_url) {
+      setError('Please fill in all required fields');
+      return;
+    }
+    if (!isValidProviderName(formData.name)) {
+      setError('Invalid provider name. Must contain only lowercase letters, digits, and hyphens, and must not start or end with a hyphen (e.g., "random", "aws", "my-provider")');
+      return;
+    }
+    if (!isValidGitUrl(formData.git_url)) {
+      setError('Invalid Git repository URL. Must be a valid HTTP or HTTPS URL (e.g., https://github.com/org/repo.git)');
+      return;
+    }
+    createMutation.mutate(formData as ProviderFromGitCreate);
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Providers</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            Terraform and OpenTofu providers available in the registry
+          </p>
+        </div>
+        <button
+          onClick={() => setShowCreateModal(true)}
+          className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700"
+        >
+          <Plus className="h-4 w-4 mr-2" />
+          Add Provider
+        </button>
+      </div>
+
+      {providers.length === 0 ? (
+        <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+          <Puzzle className="mx-auto h-12 w-12 text-gray-400" />
+          <h3 className="mt-2 text-sm font-semibold text-gray-900 dark:text-white">No providers</h3>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            Click "Add Provider" to add your first Terraform/OpenTofu provider from a Git repository
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-8">
+          {Object.entries(providersByNamespace).map(([namespace, provs]) => (
+            <div key={namespace}>
+              <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-4">
+                {namespace}
+              </h2>
+              <div className="bg-white dark:bg-gray-800 shadow rounded-lg overflow-hidden">
+                <ul className="divide-y divide-gray-200 dark:divide-gray-700">
+                  {provs.map((prov) => (
+                    <li
+                      key={prov.id}
+                      className={`transition-colors ${prov.synced
+                        ? 'hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer'
+                        : 'opacity-50 cursor-not-allowed'
+                        }`}
+                      onClick={() => prov.synced && navigate(`/providers/${prov.id}`)}
+                    >
+                      <div className="px-4 py-4 sm:px-6 flex items-center justify-between">
+                        <div className="flex items-center">
+                          <Puzzle className={`h-8 w-8 ${prov.synced ? 'text-purple-500' : 'text-gray-400'
+                            }`} />
+                          <div className="ml-4">
+                            <div className="flex items-center gap-2">
+                              <p className={`text-sm font-medium ${prov.synced
+                                ? 'text-purple-600 dark:text-purple-400'
+                                : 'text-gray-400 dark:text-gray-500'
+                                }`}>
+                                {prov.display_name ?? `${prov.namespace}/${prov.name}`}
+                              </p>
+                              {prov.display_name && (
+                                <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">
+                                  ({prov.namespace}/{prov.name})
+                                </span>
+                              )}
+                              {!prov.synced && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400">
+                                  <svg className="animate-spin -ml-0.5 mr-1.5 h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                  </svg>
+                                  Syncing tags...
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">
+                              {prov.description || 'No description'}
+                            </p>
+                            {prov.source_url && (
+                              <p className="text-xs text-gray-400 dark:text-gray-500 flex items-center mt-1">
+                                <GitBranch className="h-3 w-3 mr-1" />
+                                {prov.source_url}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        {prov.synced && <ChevronRight className="h-5 w-5 text-gray-400" />}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Create Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex min-h-screen items-center justify-center p-4">
+            <div className="fixed inset-0 bg-black/50" onClick={() => setShowCreateModal(false)} />
+            <div className="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-lg w-full p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                  <GitBranch className="h-5 w-5 mr-2 text-purple-500" />
+                  Add Provider from Git Repository
+                </h2>
+                <button
+                  onClick={() => setShowCreateModal(false)}
+                  className="text-gray-400 hover:text-gray-500"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {error && (
+                <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
+                  <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+                </div>
+              )}
+
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Namespace *
+                  </label>
+                  <select
+                    value={formData.namespace_id || ''}
+                    onChange={(e) => setFormData({ ...formData, namespace_id: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-purple-500 focus:border-purple-500"
+                    required
+                  >
+                    <option value="">Select a namespace</option>
+                    {namespaces.map((ns) => (
+                      <option key={ns.id} value={ns.id}>
+                        {ns.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Provider Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.name || ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setFormData({ ...formData, name: val });
+                      setNameError(validateProviderName(val));
+                    }}
+                    placeholder="e.g., aws, azure, kubernetes"
+                    className={`w-full px-3 py-2 border rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-purple-500 focus:border-purple-500 ${nameError ? 'border-red-500 dark:border-red-500' : 'border-gray-300 dark:border-gray-600'}`}
+                    required
+                  />
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    You can enter the full repo name (e.g. <code className="font-mono">terraform-provider-time</code>) or just the short name (e.g. <code className="font-mono">time</code>). The <code className="font-mono">terraform-provider-</code> prefix is used as display name; the short name is used for Terraform/OpenTofu.
+                  </p>
+                  {nameError && (
+                    <p className="mt-1 text-xs text-red-600 dark:text-red-400">{nameError}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Git Repository URL *
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.git_url || ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setFormData({ ...formData, git_url: val });
+                      if (val && !isValidGitUrl(val)) {
+                        setGitUrlError('Must be a valid HTTP or HTTPS URL');
+                      } else {
+                        setGitUrlError(null);
+                      }
+                    }}
+                    placeholder="https://github.com/org/terraform-provider-name.git"
+                    className={`w-full px-3 py-2 border rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-purple-500 focus:border-purple-500 ${gitUrlError ? 'border-red-500 dark:border-red-500' : 'border-gray-300 dark:border-gray-600'}`}
+                    required
+                  />
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    HTTPS Git URL (e.g., https://github.com/org/repo.git)
+                  </p>
+                  {gitUrlError && (
+                    <p className="mt-1 text-xs text-red-600 dark:text-red-400">{gitUrlError}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Description
+                  </label>
+                  <textarea
+                    value={formData.description || ''}
+                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                    placeholder="A brief description of what this provider does"
+                    rows={2}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-purple-500 focus:border-purple-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      checked={formData.is_private || false}
+                      onChange={(e) => setFormData({ ...formData, is_private: e.target.checked })}
+                      className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                    />
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Private Repository (requires HTTPS authentication)
+                    </span>
+                  </label>
+                </div>
+
+                {formData.is_private && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Username
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.git_username || ''}
+                        onChange={(e) => setFormData({ ...formData, git_username: e.target.value })}
+                        placeholder="your-username or token"
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-purple-500 focus:border-purple-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Password / Personal Access Token
+                      </label>
+                      <input
+                        type="password"
+                        value={formData.git_password || ''}
+                        onChange={(e) => setFormData({ ...formData, git_password: e.target.value })}
+                        placeholder="•••••••••••••"
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-purple-500 focus:border-purple-500"
+                        required={formData.is_private}
+                      />
+                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        For Azure DevOps/GitHub/GitLab, use a Personal Access Token
+                      </p>
+                    </div>
+                  </>
+                )}
+
+                <div className="flex justify-end gap-3 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateModal(false)}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={createMutation.isPending}
+                    className="px-4 py-2 text-sm font-medium text-white bg-purple-600 border border-transparent rounded-md hover:bg-purple-700 disabled:opacity-50"
+                  >
+                    {createMutation.isPending ? 'Creating...' : 'Create Provider'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

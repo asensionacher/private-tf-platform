@@ -1,0 +1,98 @@
+worker_processes auto;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    sendfile        on;
+    keepalive_timeout 65;
+
+    # -------------------------------------------------------------------------
+    # HTTP -> HTTPS redirect for all vhosts
+    # -------------------------------------------------------------------------
+    server {
+        listen 80;
+        server_name ${REGISTRY_HOST} api.${REGISTRY_HOST} tf.${REGISTRY_HOST};
+        return 301 https://$host$request_uri;
+    }
+
+    # -------------------------------------------------------------------------
+    # ${REGISTRY_HOST} — Frontend UI
+    # -------------------------------------------------------------------------
+    server {
+        listen 443 ssl;
+        server_name ${REGISTRY_HOST};
+
+        ssl_certificate     /etc/nginx/certs/server.crt;
+        ssl_certificate_key /etc/nginx/certs/server.key;
+        ssl_protocols       TLSv1.2 TLSv1.3;
+        ssl_ciphers         HIGH:!aNULL:!MD5;
+
+        location / {
+            proxy_pass         http://frontend:3000;
+            proxy_http_version 1.1;
+            proxy_set_header   Host              $host;
+            proxy_set_header   X-Real-IP         $remote_addr;
+            proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header   X-Forwarded-Proto $scheme;
+            proxy_set_header   Upgrade           $http_upgrade;
+            proxy_set_header   Connection        "upgrade";
+        }
+    }
+
+    # -------------------------------------------------------------------------
+    # api.${REGISTRY_HOST} — Backend API + Terraform Registry Protocol
+    # Covers: /api /v1 /.well-known /downloads /shasums
+    # -------------------------------------------------------------------------
+    server {
+        listen 443 ssl;
+        server_name api.${REGISTRY_HOST};
+
+        ssl_certificate     /etc/nginx/certs/server.crt;
+        ssl_certificate_key /etc/nginx/certs/server.key;
+        ssl_protocols       TLSv1.2 TLSv1.3;
+        ssl_ciphers         HIGH:!aNULL:!MD5;
+
+        # Large uploads for provider binaries
+        client_max_body_size 500m;
+
+        location / {
+            proxy_pass         http://backend:9080;
+            proxy_http_version 1.1;
+            proxy_set_header   Host              $host;
+            proxy_set_header   X-Real-IP         $remote_addr;
+            proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header   X-Forwarded-Proto $scheme;
+            proxy_pass_request_headers on;
+        }
+    }
+
+    # -------------------------------------------------------------------------
+    # tf.${REGISTRY_HOST} — Terraform HTTP State Backend
+    # Dedicated subdomain for /api/tfstate/:deploymentId
+    # Supports GET / POST / DELETE / LOCK / UNLOCK
+    # -------------------------------------------------------------------------
+    server {
+        listen 443 ssl;
+        server_name tf.${REGISTRY_HOST};
+
+        ssl_certificate     /etc/nginx/certs/server.crt;
+        ssl_certificate_key /etc/nginx/certs/server.key;
+        ssl_protocols       TLSv1.2 TLSv1.3;
+        ssl_ciphers         HIGH:!aNULL:!MD5;
+
+        location / {
+            proxy_pass         http://backend:9080;
+            proxy_http_version 1.1;
+            proxy_set_header   Host              $host;
+            proxy_set_header   X-Real-IP         $remote_addr;
+            proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header   X-Forwarded-Proto $scheme;
+            proxy_pass_request_headers on;
+        }
+    }
+}
