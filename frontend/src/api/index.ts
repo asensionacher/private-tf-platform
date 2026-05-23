@@ -14,7 +14,12 @@ import type {
   ProviderVersion,
   ProviderPlatform,
   ProviderPlatformCreate,
-  TFStateSummary
+  TFStateSummary,
+  User,
+  UserCreate,
+  UserUpdate,
+  LoginRequest,
+  LoginResponse,
 } from '../types';
 
 // Use environment variable for API base URL, fallback to relative path
@@ -24,8 +29,45 @@ const api = axios.create({
   baseURL: apiBaseUrl,
 });
 
-// No authentication needed for management API
-// API keys are only required for Terraform protocol endpoints
+// Inject JWT token from localStorage into every request
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('jwt_token');
+  if (token) {
+    config.headers = config.headers ?? {};
+    config.headers['Authorization'] = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Redirect to login on 401
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('jwt_token');
+      localStorage.removeItem('jwt_user');
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  }
+);
+
+// Auth API (login is unauthenticated)
+export const authApi = {
+  login: (data: LoginRequest) =>
+    api.post<LoginResponse>('/auth/login', data).then(res => res.data),
+  me: () => api.get<User>('/auth/me').then(res => res.data),
+};
+
+// Users API (admin only)
+export const usersApi = {
+  getAll: () => api.get<User[]>('/users').then(res => res.data || []),
+  create: (data: UserCreate) => api.post<User>('/users', data).then(res => res.data),
+  update: (id: string, data: UserUpdate) => api.put<User>(`/users/${id}`, data).then(res => res.data),
+  changePassword: (id: string, password: string) =>
+    api.patch(`/users/${id}/password`, { password }).then(res => res.data),
+  delete: (id: string) => api.delete(`/users/${id}`).then(res => res.data),
+};
 
 // Namespaces API
 export const namespacesApi = {

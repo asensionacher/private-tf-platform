@@ -4,10 +4,12 @@ import { useNavigate } from 'react-router-dom';
 import { Puzzle, ChevronRight, Plus, X, GitBranch } from 'lucide-react';
 import { providersApi, namespacesApi } from '../api';
 import type { Provider, ProviderFromGitCreate } from '../types';
+import { useAuth } from '../context/AuthContext';
 
 export default function ProvidersPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { isAdmin } = useAuth();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [formData, setFormData] = useState<Partial<ProviderFromGitCreate>>({
     name: '',
@@ -134,13 +136,15 @@ export default function ProvidersPage() {
             Terraform and OpenTofu providers available in the registry
           </p>
         </div>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700"
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Add Provider
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Add Provider
+          </button>
+        )}
       </div>
 
       {providers.length === 0 ? (

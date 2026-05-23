@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Key, Plus, Trash2, Copy, Check } from 'lucide-react';
 import { namespacesApi } from '@/api';
+import { useAuth } from '../context/AuthContext';
 import type { APIKey } from '../types';
 
 export default function ApiKeysPage() {
+  const { user, isAdmin } = useAuth();
   const [apiKeys, setApiKeys] = useState<APIKey[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newKeyName, setNewKeyName] = useState('');
@@ -30,7 +32,6 @@ export default function ApiKeysPage() {
 
   const handleCreateKey = async () => {
     if (!newKeyName) return;
-
     try {
       const response = await namespacesApi.createAPIKey('', { name: newKeyName });
       setCreatedKey(response);
@@ -44,10 +45,9 @@ export default function ApiKeysPage() {
   };
 
   const handleDeleteKey = async (keyId: string) => {
-    if (!confirm('Are you sure you want to delete this API key? This action cannot be undone.')) {
+    if (!confirm('Are you sure you want to revoke this API key? This action cannot be undone.')) {
       return;
     }
-
     try {
       await namespacesApi.deleteAPIKey('', keyId);
       fetchApiKeys();
@@ -63,24 +63,16 @@ export default function ApiKeysPage() {
     setTimeout(() => setCopiedKey(false), 2000);
   };
 
+  const canDelete = (key: APIKey) => isAdmin || key.user_id === user?.id;
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">API Keys</h1>
         <p className="text-sm text-gray-500 dark:text-gray-400">
-          Manage API keys for Terraform and OpenTofu CLI authentication
-        </p>
-      </div>
-
-      <div className="bg-amber-50 dark:bg-amber-900/20 rounded-lg p-4">
-        <h3 className="text-sm font-medium text-amber-800 dark:text-amber-200 mb-2">
-          About API Keys
-        </h3>
-        <p className="text-xs text-amber-700 dark:text-amber-300">
-          API keys are only required for Terraform/OpenTofu CLI access to private namespaces.
-          Public namespaces can be accessed without authentication.
-          The web interface does not require authentication - you can create and manage
-          namespaces, modules, and providers directly from this UI.
+          {isAdmin
+            ? 'Manage all API keys across all users.'
+            : 'Manage your API keys for Terraform and OpenTofu CLI authentication.'}
         </p>
       </div>
 
@@ -88,7 +80,9 @@ export default function ApiKeysPage() {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center">
             <Key className="h-5 w-5 text-gray-400 mr-2" />
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Global API Keys</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+              {isAdmin ? 'All API Keys' : 'My API Keys'}
+            </h2>
           </div>
           {!showCreateForm && (
             <button
@@ -100,10 +94,6 @@ export default function ApiKeysPage() {
             </button>
           )}
         </div>
-
-        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-          API keys provide global access to all namespaces in the registry. Use them with Terraform or OpenTofu CLI for authentication.
-        </p>
 
         <div className="space-y-4">
           {/* Created Key Alert */}
@@ -158,9 +148,6 @@ export default function ApiKeysPage() {
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white"
                   />
                 </div>
-                <p className="text-xs text-gray-500 dark:text-gray-400">
-                  All API keys have full admin permissions.
-                </p>
                 <div className="flex gap-2">
                   <button
                     onClick={handleCreateKey}
@@ -170,10 +157,7 @@ export default function ApiKeysPage() {
                     Create Key
                   </button>
                   <button
-                    onClick={() => {
-                      setShowCreateForm(false);
-                      setNewKeyName('');
-                    }}
+                    onClick={() => { setShowCreateForm(false); setNewKeyName(''); }}
                     className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-600"
                   >
                     Cancel
@@ -191,36 +175,40 @@ export default function ApiKeysPage() {
           ) : apiKeys.length > 0 ? (
             <div className="space-y-2">
               <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                Existing Keys ({apiKeys.length})
+                {apiKeys.length} key{apiKeys.length !== 1 ? 's' : ''}
               </h3>
               {apiKeys.map((key) => (
                 <div
                   key={key.id}
                   className="flex items-center justify-between p-3 border border-gray-200 dark:border-gray-700 rounded-lg"
                 >
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium text-gray-900 dark:text-white">
                         {key.name}
                       </span>
-                      <span className="px-2 py-0.5 text-xs rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
-                        {key.permissions}
-                      </span>
+                      {isAdmin && key.username && (
+                        <span className="px-2 py-0.5 text-xs rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300">
+                          {key.username}
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                       Created: {new Date(key.created_at).toLocaleDateString()}
                       {key.last_used_at && (
-                        <> • Last used: {new Date(key.last_used_at).toLocaleDateString()}</>
+                        <> · Last used: {new Date(key.last_used_at).toLocaleDateString()}</>
                       )}
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleDeleteKey(key.id)}
-                    className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-                    title="Delete API Key"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  {canDelete(key) && (
+                    <button
+                      onClick={() => handleDeleteKey(key.id)}
+                      className="ml-3 p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded flex-shrink-0"
+                      title="Revoke API Key"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

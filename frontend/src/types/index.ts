@@ -1,3 +1,33 @@
+// User for web UI authentication
+export interface User {
+  id: string;
+  username: string;
+  role: 'admin' | 'reader';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserCreate {
+  username: string;
+  password: string;
+  role: 'admin' | 'reader';
+}
+
+export interface UserUpdate {
+  username?: string;
+  role?: 'admin' | 'reader';
+}
+
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+
+export interface LoginResponse {
+  token: string;
+  user: User;
+}
+
 // Namespace (Authority) - organization that owns modules and providers
 export interface Namespace {
   id: string;
@@ -19,7 +49,8 @@ export interface NamespaceCreate {
 // API Key for authentication
 export interface APIKey {
   id: string;
-  namespace_id: string;
+  user_id?: string;
+  username?: string;
   name: string;
   key?: string; // Only shown on creation
   permissions: 'read' | 'write' | 'admin';

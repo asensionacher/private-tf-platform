@@ -29,6 +29,8 @@ type NamespaceUpdate struct {
 // APIKey represents an API key for authenticating with the registry
 type APIKey struct {
 	ID          string     `json:"id"`
+	UserID      *string    `json:"user_id,omitempty"`
+	Username    *string    `json:"username,omitempty"` // Joined from users table
 	Name        string     `json:"name"`
 	Key         string     `json:"key,omitempty"` // Only shown on creation
 	KeyHash     string     `json:"-"`             // Stored in DB

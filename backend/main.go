@@ -139,67 +139,100 @@ func main() {
 	}
 
 	// =========================================================================
-	// Management API (for frontend) - NO AUTHENTICATION REQUIRED
+	// Authentication endpoints (public — no JWT required)
+	// =========================================================================
+	r.POST("/api/auth/login", api.Login)
+
+	// =========================================================================
+	// Management API (for frontend) - JWT AUTHENTICATION REQUIRED
 	// =========================================================================
 	apiGroup := r.Group("/api")
+	apiGroup.Use(api.JWTAuthMiddleware())
 	{
+		// Current user info
+		apiGroup.GET("/auth/me", api.GetCurrentUser)
+
+		// User management (admin only)
+		adminUsers := apiGroup.Group("/users")
+		adminUsers.Use(api.AdminOnlyMiddleware())
+		{
+			adminUsers.GET("", api.GetUsers)
+			adminUsers.POST("", api.CreateUser)
+			adminUsers.PUT("/:id", api.UpdateUser)
+			adminUsers.PATCH("/:id/password", api.ChangeUserPassword)
+			adminUsers.DELETE("/:id", api.DeleteUser)
+		}
+
 		// Modules
 		apiGroup.GET("/modules", api.GetModules)
 		apiGroup.GET("/modules/:id", api.GetModule)
 		apiGroup.GET("/modules/:id/versions", api.GetModuleVersions)
 		apiGroup.GET("/modules/:id/git-tags", api.GetModuleGitTags)
 		apiGroup.GET("/modules/:id/readme", api.GetModuleReadme)
-		apiGroup.POST("/modules", api.CreateModuleFromGit)
-		apiGroup.PUT("/modules/:id", api.UpdateModule)
-		apiGroup.DELETE("/modules/:id", api.DeleteModuleByID)
-		apiGroup.POST("/modules/:id/sync-tags", api.SyncModuleTags)
-		apiGroup.POST("/modules/:id/versions", api.AddModuleVersion)
-		apiGroup.PATCH("/modules/:id/versions/:versionId", api.ToggleModuleVersion)
-		apiGroup.DELETE("/modules/:id/versions/:versionId", api.DeleteModuleVersionByID)
+		// Admin-only write operations
+		adminGroup := apiGroup.Group("")
+		adminGroup.Use(api.AdminOnlyMiddleware())
+		{
+			adminGroup.POST("/modules", api.CreateModuleFromGit)
+			adminGroup.PUT("/modules/:id", api.UpdateModule)
+			adminGroup.DELETE("/modules/:id", api.DeleteModuleByID)
+			adminGroup.POST("/modules/:id/sync-tags", api.SyncModuleTags)
+			adminGroup.POST("/modules/:id/versions", api.AddModuleVersion)
+			adminGroup.PATCH("/modules/:id/versions/:versionId", api.ToggleModuleVersion)
+			adminGroup.DELETE("/modules/:id/versions/:versionId", api.DeleteModuleVersionByID)
 
-		// Providers
+			adminGroup.POST("/providers", api.CreateProviderFromGit)
+			adminGroup.DELETE("/providers/:id", api.DeleteProviderByID)
+			adminGroup.POST("/providers/:id/sync-tags", api.SyncProviderTags)
+			adminGroup.POST("/providers/:id/versions", api.AddProviderVersion)
+			adminGroup.PATCH("/providers/:id/versions/:versionId", api.ToggleProviderVersion)
+			adminGroup.DELETE("/providers/:id/versions/:versionId", api.DeleteProviderVersionByID)
+			adminGroup.POST("/providers/:id/versions/:versionId/platforms", api.AddProviderPlatform)
+			adminGroup.DELETE("/providers/:id/versions/:versionId/platforms/:platformId", api.DeleteProviderPlatform)
+			adminGroup.POST("/providers/:id/versions/:versionId/platforms/upload", api.UploadProviderPlatform)
+
+			adminGroup.POST("/namespaces", api.CreateNamespace)
+			adminGroup.PATCH("/namespaces/:id", api.UpdateNamespace)
+			adminGroup.DELETE("/namespaces/:id", api.DeleteNamespace)
+		}
+
+		// Providers (read-only, open to all authenticated users)
 		apiGroup.GET("/providers", api.GetProviders)
 		apiGroup.GET("/providers/:id", api.GetProvider)
 		apiGroup.GET("/providers/:id/versions", api.GetProviderVersions)
 		apiGroup.GET("/providers/:id/git-tags", api.GetProviderGitTags)
 		apiGroup.GET("/providers/:id/readme", api.GetProviderReadme)
-		apiGroup.POST("/providers", api.CreateProviderFromGit)
-		apiGroup.DELETE("/providers/:id", api.DeleteProviderByID)
-		apiGroup.POST("/providers/:id/sync-tags", api.SyncProviderTags)
-		apiGroup.POST("/providers/:id/versions", api.AddProviderVersion)
-		apiGroup.PATCH("/providers/:id/versions/:versionId", api.ToggleProviderVersion)
-		apiGroup.DELETE("/providers/:id/versions/:versionId", api.DeleteProviderVersionByID)
 		apiGroup.GET("/providers/:id/versions/:versionId/platforms", api.GetProviderPlatforms)
-		apiGroup.POST("/providers/:id/versions/:versionId/platforms", api.AddProviderPlatform)
-		apiGroup.DELETE("/providers/:id/versions/:versionId/platforms/:platformId", api.DeleteProviderPlatform)
-		apiGroup.POST("/providers/:id/versions/:versionId/platforms/upload", api.UploadProviderPlatform)
 
-		// Namespaces
+		// Namespaces (read-only, open to all authenticated users)
 		apiGroup.GET("/namespaces", api.GetNamespaces)
 		apiGroup.GET("/namespaces/:id", api.GetNamespace)
-		apiGroup.POST("/namespaces", api.CreateNamespace)
-		apiGroup.PATCH("/namespaces/:id", api.UpdateNamespace)
-		apiGroup.DELETE("/namespaces/:id", api.DeleteNamespace)
 
-		// API Keys (global, for Terraform CLI access to all namespaces)
+		// API Keys (readers can manage their own; admins can manage all)
 		apiGroup.GET("/api-keys", api.GetAPIKeys)
 		apiGroup.POST("/api-keys", api.CreateAPIKey)
 		apiGroup.DELETE("/api-keys/:keyId", api.DeleteAPIKey)
 
-		// TF State HTTP backend protocol endpoints
-		// These implement the Terraform HTTP backend: https://developer.hashicorp.com/terraform/language/backend/http
-		apiGroup.GET("/tfstate/:deploymentId", api.GetTFState)
-		apiGroup.POST("/tfstate/:deploymentId", api.UpdateTFState)
-		apiGroup.DELETE("/tfstate/:deploymentId", api.DeleteTFState)
-		apiGroup.Handle("LOCK", "/tfstate/:deploymentId", api.LockTFState)
-		apiGroup.Handle("UNLOCK", "/tfstate/:deploymentId", api.UnlockTFState)
-
-		// TF State management endpoints (for UI)
+		// TF State management endpoints (for UI) - JWT auth
 		apiGroup.GET("/tfstates", api.ListAllTFStateDeployments)
 		apiGroup.GET("/deployments/:id/tfstates", api.ListTFStates)
 		apiGroup.GET("/deployments/:id/tfstates/:workspace/raw", api.GetTFStateRaw)
 		apiGroup.DELETE("/deployments/:id/tfstates/:workspace/lock", api.ForceUnlockTFState)
 		apiGroup.DELETE("/deployments/:id/tfstates/:workspace", api.DeleteTFStateWorkspace)
+	}
+
+	// =========================================================================
+	// TF State HTTP backend protocol endpoints - BASIC AUTH (username:password)
+	// Terraform/OpenTofu CLI does not send JWT; it uses HTTP Basic Auth.
+	// =========================================================================
+	tfStateGroup := r.Group("/api/tfstate")
+	tfStateGroup.Use(api.TFStateBasicAuthMiddleware())
+	{
+		tfStateGroup.GET("/:deploymentId", api.GetTFState)
+		tfStateGroup.POST("/:deploymentId", api.UpdateTFState)
+		tfStateGroup.DELETE("/:deploymentId", api.DeleteTFState)
+		tfStateGroup.Handle("LOCK", "/:deploymentId", api.LockTFState)
+		tfStateGroup.Handle("UNLOCK", "/:deploymentId", api.UnlockTFState)
 	}
 
 	port := os.Getenv("PORT")

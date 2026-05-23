@@ -9,6 +9,7 @@ import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useTheme } from '../context/ThemeContext';
+import { useAuth } from '../context/AuthContext';
 import { modulesApi } from '../api';
 
 // Custom schema to allow anchor names and common HTML elements
@@ -28,6 +29,7 @@ export default function ModuleDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { theme } = useTheme();
+  const { isAdmin } = useAuth();
 
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
@@ -202,13 +204,15 @@ export default function ModuleDetailPage() {
             </div>
           </div>
         </div>
-        <button
-          onClick={() => setShowDeleteConfirm(true)}
-          className="inline-flex items-center px-3 py-2 border border-red-300 dark:border-red-700 rounded-md text-sm font-medium text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
-        >
-          <Trash2 className="h-4 w-4 mr-2" />
-          Delete Module
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="inline-flex items-center px-3 py-2 border border-red-300 dark:border-red-700 rounded-md text-sm font-medium text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Delete Module
+          </button>
+        )}
       </div>
 
       {/* Usage Examples */}
@@ -445,14 +449,16 @@ credentials "${registryHost}" {
                 {enabledVersions.length} of {versions.length} enabled
               </p>
             </div>
-            <button
-              onClick={() => syncTagsMutation.mutate()}
-              disabled={syncing}
-              className="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
-            >
-              <RefreshCw className={`h-4 w-4 mr-1 ${syncing ? 'animate-spin' : ''}`} />
-              Sync Tags
-            </button>
+            {isAdmin && (
+              <button
+                onClick={() => syncTagsMutation.mutate()}
+                disabled={syncing}
+                className="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+              >
+                <RefreshCw className={`h-4 w-4 mr-1 ${syncing ? 'animate-spin' : ''}`} />
+                Sync Tags
+              </button>
+            )}
           </div>
 
           {syncMessage && (
@@ -503,23 +509,25 @@ credentials "${registryHost}" {
                     )}
                   </div>
                   <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => toggleVersionMutation.mutate({
-                        versionId: version.id,
-                        enabled: !version.enabled
-                      })}
-                      className={`p-1.5 rounded transition-colors ${version.enabled
-                        ? 'text-green-600 hover:bg-green-100 dark:hover:bg-green-900/40'
-                        : 'text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
-                        }`}
-                      title={version.enabled ? 'Disable version' : 'Enable version'}
-                    >
-                      {version.enabled ? (
-                        <Eye className="h-4 w-4" />
-                      ) : (
-                        <EyeOff className="h-4 w-4" />
-                      )}
-                    </button>
+                    {isAdmin && (
+                      <button
+                        onClick={() => toggleVersionMutation.mutate({
+                          versionId: version.id,
+                          enabled: !version.enabled
+                        })}
+                        className={`p-1.5 rounded transition-colors ${version.enabled
+                          ? 'text-green-600 hover:bg-green-100 dark:hover:bg-green-900/40'
+                          : 'text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                          }`}
+                        title={version.enabled ? 'Disable version' : 'Enable version'}
+                      >
+                        {version.enabled ? (
+                          <Eye className="h-4 w-4" />
+                        ) : (
+                          <EyeOff className="h-4 w-4" />
+                        )}
+                      </button>
+                    )}
                   </div>
                 </li>
               ))}

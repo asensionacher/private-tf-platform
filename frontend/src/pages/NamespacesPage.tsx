@@ -3,9 +3,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Building2, Plus, Trash2 } from 'lucide-react';
 import { namespacesApi } from '../api';
 import type { NamespaceCreate } from '../types';
+import { useAuth } from '../context/AuthContext';
 
 export default function NamespacesPage() {
   const queryClient = useQueryClient();
+  const { isAdmin } = useAuth();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState<NamespaceCreate>({
     name: '',
@@ -53,13 +55,15 @@ export default function NamespacesPage() {
             Manage namespaces (organizations) for modules and providers
           </p>
         </div>
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
-        >
-          <Plus className="h-4 w-4" />
-          New Namespace
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+          >
+            <Plus className="h-4 w-4" />
+            New Namespace
+          </button>
+        )}
       </div>
 
       <div className="bg-white dark:bg-gray-800 shadow rounded-lg overflow-hidden">

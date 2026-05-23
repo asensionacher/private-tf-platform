@@ -38,24 +38,44 @@ bash scripts/gen-certs.sh
 
 This creates a self-signed CA and a server certificate covering all three subdomains, saved to `nginx/certs/`. The certs are gitignored — regenerate them on each new clone.
 
-Trust the CA so browsers and CLI tools accept it:
+### 3. Trust the CA certificate
 
+The CA must be trusted on every machine that will access the registry — both the server and any machine running Terraform or OpenTofu. Copy `nginx/certs/ca.crt` to each machine and run the appropriate command:
+
+**Arch / CachyOS**
 ```bash
-# Arch / CachyOS
-sudo trust anchor --store nginx/certs/ca.crt && sudo update-ca-trust
+sudo trust anchor --store ca.crt && sudo update-ca-trust
+```
 
-# Debian / Ubuntu
-sudo cp nginx/certs/ca.crt /usr/local/share/ca-certificates/iac-registry-ca.crt
+**Debian / Ubuntu**
+```bash
+sudo cp ca.crt /usr/local/share/ca-certificates/iac-registry-ca.crt
 sudo update-ca-certificates
 ```
 
-### 3. Add hostnames to `/etc/hosts`
+**RHEL / Fedora / CentOS**
+```bash
+sudo cp ca.crt /etc/pki/ca-trust/source/anchors/iac-registry-ca.crt
+sudo update-ca-trust extract
+```
+
+**macOS**
+```bash
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ca.crt
+```
+
+**Windows** (run in an elevated PowerShell)
+```powershell
+Import-Certificate -FilePath ca.crt -CertStoreLocation Cert:\LocalMachine\Root
+```
+
+### 4. Add hostnames to `/etc/hosts`
 
 ```
 <server-ip>  registry.lan  api.registry.lan  tf.registry.lan
 ```
 
-### 4. Start
+### 5. Start
 
 ```bash
 docker compose up -d --build
@@ -112,6 +132,15 @@ terraform {
 ## HTTP state backend
 
 Store remote Terraform/OpenTofu state without S3 or Consul.
+
+The state backend uses **HTTP Basic Auth** — the same username and password you use to log into the web UI. Any user (admin or reader) can access the state backend.
+
+> **Never hardcode credentials in `.tf` files.** Use environment variables instead — Terraform and OpenTofu read `TF_HTTP_USERNAME` and `TF_HTTP_PASSWORD` automatically.
+
+```bash
+export TF_HTTP_USERNAME="myuser"
+export TF_HTTP_PASSWORD="mypassword"
+```
 
 ```hcl
 terraform {

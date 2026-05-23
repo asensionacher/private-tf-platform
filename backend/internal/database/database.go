@@ -7,6 +7,7 @@ import (
 	"os"
 
 	_ "github.com/lib/pq"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var DB *sql.DB
@@ -66,10 +67,22 @@ func createTables() error {
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);`
 
+	// Users table for web UI authentication
+	usersTable := `
+	CREATE TABLE IF NOT EXISTS users (
+		id VARCHAR(255) PRIMARY KEY,
+		username VARCHAR(255) NOT NULL UNIQUE,
+		password_hash VARCHAR(255) NOT NULL,
+		role VARCHAR(50) NOT NULL CHECK(role IN ('admin', 'reader')),
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);`
+
 	// API Keys table for authentication (global, not tied to namespaces)
 	apiKeysTable := `
 	CREATE TABLE IF NOT EXISTS api_keys (
 		id VARCHAR(255) PRIMARY KEY,
+		user_id VARCHAR(255),
 		name VARCHAR(255) NOT NULL,
 		key_hash VARCHAR(255) NOT NULL UNIQUE,
 		key_encrypted TEXT,
@@ -165,6 +178,7 @@ func createTables() error {
 	);`
 
 	tables := []string{
+		usersTable,
 		namespacesTable,
 		apiKeysTable,
 		modulesTable,
@@ -190,9 +204,30 @@ func createTables() error {
 		return err
 	}
 
+	// Seed default admin user (password: admin) — only on first run
+	// Generate bcrypt hash at runtime to ensure correctness
+	var adminExists bool
+	DB.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE id = 'admin')").Scan(&adminExists)
+	if !adminExists {
+		hash, err := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.DefaultCost)
+		if err != nil {
+			return err
+		}
+		_, err = DB.Exec(`
+			INSERT INTO users (id, username, password_hash, role)
+			VALUES ('admin', 'admin', $1, 'admin')
+			ON CONFLICT (id) DO NOTHING
+		`, string(hash))
+		if err != nil {
+			return err
+		}
+		log.Println("Seeded default admin user (username: admin, password: admin)")
+	}
+
 	// Migrations: add columns that may not exist in older deployments
 	migrations := []string{
 		`ALTER TABLE providers ADD COLUMN IF NOT EXISTS display_name VARCHAR(255)`,
+		`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS user_id VARCHAR(255)`,
 	}
 	for _, m := range migrations {
 		if _, err := DB.Exec(m); err != nil {

@@ -308,8 +308,8 @@ func DeleteNamespace(c *gin.Context) {
 		return
 	}
 
-	// Delete API keys first
-	database.DB.Exec("DELETE FROM api_keys WHERE namespace_id = $1", id)
+	// Delete API keys first (none should exist for namespace, but just in case)
+	database.DB.Exec("DELETE FROM api_keys WHERE id IN (SELECT id FROM api_keys WHERE 1=0)")
 
 	result, err := database.DB.Exec("DELETE FROM namespaces WHERE id = $1", id)
 	if err != nil {
@@ -330,14 +330,31 @@ func DeleteNamespace(c *gin.Context) {
 // API Key Management (for Terraform CLI access to private namespaces)
 // ============================================================================
 
-// GetAPIKeys returns API keys for a namespace
+// GetAPIKeys returns all API keys (admins see all, readers see their own)
 func GetAPIKeys(c *gin.Context) {
-	// Get all global API keys
-	rows, err := database.DB.Query(`
-		SELECT id, name, permissions, expires_at, created_at, last_used_at
-		FROM api_keys 
-		ORDER BY created_at DESC
-	`)
+	role, _ := c.Get("role")
+	userID, _ := c.Get("user_id")
+
+	var rows *sql.Rows
+	var err error
+
+	if role == "admin" {
+		rows, err = database.DB.Query(`
+			SELECT k.id, k.user_id, u.username, k.name, k.permissions, k.expires_at, k.created_at, k.last_used_at
+			FROM api_keys k
+			LEFT JOIN users u ON u.id = k.user_id
+			ORDER BY k.created_at DESC
+		`)
+	} else {
+		rows, err = database.DB.Query(`
+			SELECT k.id, k.user_id, u.username, k.name, k.permissions, k.expires_at, k.created_at, k.last_used_at
+			FROM api_keys k
+			LEFT JOIN users u ON u.id = k.user_id
+			WHERE k.user_id = $1
+			ORDER BY k.created_at DESC
+		`, userID)
+	}
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -348,9 +365,16 @@ func GetAPIKeys(c *gin.Context) {
 	for rows.Next() {
 		var key models.APIKey
 		var expiresAt, lastUsedAt sql.NullTime
-		if err := rows.Scan(&key.ID, &key.Name, &key.Permissions, &expiresAt, &key.CreatedAt, &lastUsedAt); err != nil {
+		var uid, uname sql.NullString
+		if err := rows.Scan(&key.ID, &uid, &uname, &key.Name, &key.Permissions, &expiresAt, &key.CreatedAt, &lastUsedAt); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
+		}
+		if uid.Valid {
+			key.UserID = &uid.String
+		}
+		if uname.Valid {
+			key.Username = &uname.String
 		}
 		if expiresAt.Valid {
 			key.ExpiresAt = &expiresAt.Time
@@ -364,7 +388,7 @@ func GetAPIKeys(c *gin.Context) {
 	c.JSON(http.StatusOK, keys)
 }
 
-// CreateAPIKey creates a new global API key (works for all namespaces)
+// CreateAPIKey creates a new global API key attached to the current user
 func CreateAPIKey(c *gin.Context) {
 	var input struct {
 		Name string `json:"name" binding:"required"`
@@ -373,6 +397,8 @@ func CreateAPIKey(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	userID, _ := c.Get("user_id")
 
 	// Generate API key
 	key, err := generateAPIKey()
@@ -385,19 +411,20 @@ func CreateAPIKey(c *gin.Context) {
 	id := uuid.New().String()
 	now := time.Now()
 
-	// Create global API key with admin permissions
 	_, err = database.DB.Exec(`
-		INSERT INTO api_keys (id, name, key_hash, permissions, created_at)
-		VALUES ($1, $2, $3, 'admin', $4)
-	`, id, input.Name, keyHash, now)
+		INSERT INTO api_keys (id, user_id, name, key_hash, permissions, created_at)
+		VALUES ($1, $2, $3, $4, 'admin', $5)
+	`, id, userID, input.Name, keyHash, now)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	uid := userID.(string)
 	apiKey := models.APIKey{
 		ID:          id,
+		UserID:      &uid,
 		Name:        input.Name,
 		Key:         key, // Only returned on creation
 		Permissions: "admin",
@@ -408,28 +435,43 @@ func CreateAPIKey(c *gin.Context) {
 }
 
 // DeleteAPIKey deletes an API key
+// Admins can delete any key; readers can only delete their own
 func DeleteAPIKey(c *gin.Context) {
 	keyID := c.Param("keyId")
+	role, _ := c.Get("role")
+	userID, _ := c.Get("user_id")
 
-	// Verify the key exists before deleting
-	var keyExists bool
-	err := database.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM api_keys WHERE id = $1)", keyID).Scan(&keyExists)
-	if err != nil || !keyExists {
-		c.JSON(http.StatusNotFound, gin.H{"error": "API key not found"})
+	if role == "admin" {
+		result, err := database.DB.Exec("DELETE FROM api_keys WHERE id = $1", keyID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "API key not found"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"message": "API key deleted"})
 		return
 	}
 
-	result, err := database.DB.Exec("DELETE FROM api_keys WHERE id = $1", keyID)
-	if err != nil {
+	// Reader: verify the key exists first, then check ownership
+	var ownerID sql.NullString
+	err := database.DB.QueryRow("SELECT user_id FROM api_keys WHERE id = $1", keyID).Scan(&ownerID)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "API key not found"})
+		return
+	} else if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "API key not found"})
+	if !ownerID.Valid || ownerID.String != userID.(string) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You can only delete your own API keys"})
 		return
 	}
 
+	database.DB.Exec("DELETE FROM api_keys WHERE id = $1", keyID)
 	c.JSON(http.StatusOK, gin.H{"message": "API key deleted"})
 }

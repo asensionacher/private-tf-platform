@@ -4,10 +4,12 @@ import { useNavigate } from 'react-router-dom';
 import { Package, Box, ChevronRight, Plus, X, GitBranch, AlertCircle, RefreshCw, Trash2 } from 'lucide-react';
 import { modulesApi, namespacesApi } from '../api';
 import type { Module, ModuleFromGitCreate, Namespace } from '../types';
+import { useAuth } from '../context/AuthContext';
 
 export default function ModulesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { isAdmin } = useAuth();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [formData, setFormData] = useState<Partial<ModuleFromGitCreate>>({
     name: '',
@@ -215,13 +217,15 @@ export default function ModulesPage() {
             Terraform and OpenTofu modules available in the registry
           </p>
         </div>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Add Module
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Add Module
+          </button>
+        )}
       </div>
 
       {modules.length === 0 ? (
