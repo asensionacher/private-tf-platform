@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { ChevronRight, ChevronDown, Download, RefreshCw, Database } from 'lucide-react';
 import { tfStateApi } from '../api';
 import type { TFStateSummary } from '../types';
+import { useAuth } from '../context/AuthContext';
 
 // ─── JSON tree viewer ──────────────────────────────────────────────────────────
 
@@ -80,6 +81,7 @@ function JsonTree({ data }: { data: JsonValue }) {
 // ─── Main page ─────────────────────────────────────────────────────────────────
 
 export default function TFStateBrowserPage() {
+  const { isAdmin } = useAuth();
   const [deploymentIds, setDeploymentIds] = useState<string[]>([]);
   const [selectedDeploymentId, setSelectedDeploymentId] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<TFStateSummary[]>([]);
@@ -91,6 +93,13 @@ export default function TFStateBrowserPage() {
   const [loadingWorkspaces, setLoadingWorkspaces] = useState(false);
   const [loadingState, setLoadingState] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 4000);
+  };
 
   // Load deployment IDs from disk on mount
   useEffect(() => {
@@ -146,8 +155,56 @@ export default function TFStateBrowserPage() {
       .finally(() => setLoadingWorkspaces(false));
   };
 
+  const handleForceUnlock = async (ws: TFStateSummary) => {
+    if (!selectedDeploymentId) return;
+    if (!confirm(`Force-unlock workspace "${ws.workspace}"? Only do this if no Terraform process is running.`)) return;
+    setActionLoading(`unlock-${ws.id}`);
+    try {
+      await tfStateApi.forceUnlock(selectedDeploymentId, ws.workspace);
+      showNotification(`Workspace "${ws.workspace}" unlocked`, 'success');
+      if (selectedWorkspace?.id === ws.id) setSelectedWorkspace({ ...ws, lock_id: undefined, locked_at: undefined });
+      refreshWorkspaces();
+    } catch {
+      showNotification('Failed to unlock', 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDeleteWorkspace = async (ws: TFStateSummary) => {
+    if (!selectedDeploymentId) return;
+    if (!confirm(`Delete all state for workspace "${ws.workspace}"? This cannot be undone.`)) return;
+    setActionLoading(`delete-${ws.id}`);
+    try {
+      await tfStateApi.deleteWorkspace(selectedDeploymentId, ws.workspace);
+      showNotification(`Workspace "${ws.workspace}" deleted`, 'success');
+      if (selectedWorkspace?.id === ws.id) { setSelectedWorkspace(null); setRawJson(null); }
+      refreshWorkspaces();
+    } catch {
+      showNotification('Failed to delete workspace', 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {notification && (
+        <div className={`fixed top-4 right-4 z-50 px-6 py-4 rounded-lg shadow-lg border transition-all duration-300 ${
+          notification.type === 'success'
+            ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-800 dark:text-green-200'
+            : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200'
+        }`}>
+          <div className="flex items-center gap-3">
+            <p className="font-medium text-sm">{notification.message}</p>
+            <button onClick={() => setNotification(null)} className="ml-2 text-gray-500 hover:text-gray-700">
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center gap-3">
         <Database className="h-7 w-7 text-blue-500" />
@@ -217,25 +274,46 @@ export default function TFStateBrowserPage() {
               <p className="px-4 py-6 text-xs text-gray-400 dark:text-gray-500 text-center">No state files yet</p>
             ) : (
               workspaces.map(ws => (
-                <button
-                  key={ws.id}
-                  onClick={() => setSelectedWorkspace(ws)}
-                  className={`w-full text-left px-4 py-3 text-sm transition-colors border-l-2 ${
-                    selectedWorkspace?.id === ws.id
-                      ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-500 text-blue-700 dark:text-blue-300 font-medium'
-                      : 'border-transparent text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
-                  }`}
-                >
-                  <div className="truncate font-mono text-xs font-semibold">{ws.workspace}</div>
-                  <div className="flex items-center gap-1 mt-0.5">
-                    {ws.lock_id ? (
-                      <span className="text-xs text-yellow-600 dark:text-yellow-400">locked</span>
-                    ) : (
-                      <span className="text-xs text-green-600 dark:text-green-400">unlocked</span>
-                    )}
-                    <span className="text-xs text-gray-400 dark:text-gray-500">· serial {ws.state_serial}</span>
-                  </div>
-                </button>
+                <div key={ws.id} className={`border-l-2 transition-colors ${
+                  selectedWorkspace?.id === ws.id
+                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-500'
+                    : 'border-transparent hover:bg-gray-50 dark:hover:bg-gray-700'
+                }`}>
+                  <button
+                    onClick={() => setSelectedWorkspace(ws)}
+                    className="w-full text-left px-4 py-3 text-sm"
+                  >
+                    <div className={`truncate font-mono text-xs font-semibold ${selectedWorkspace?.id === ws.id ? 'text-blue-700 dark:text-blue-300' : 'text-gray-700 dark:text-gray-300'}`}>{ws.workspace}</div>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      {ws.lock_id ? (
+                        <span className="text-xs text-yellow-600 dark:text-yellow-400">locked</span>
+                      ) : (
+                        <span className="text-xs text-green-600 dark:text-green-400">unlocked</span>
+                      )}
+                      <span className="text-xs text-gray-400 dark:text-gray-500">· serial {ws.state_serial}</span>
+                    </div>
+                  </button>
+                  {isAdmin && (
+                    <div className="px-3 pb-2 flex gap-1">
+                      {ws.lock_id && (
+                        <button
+                          onClick={() => handleForceUnlock(ws)}
+                          disabled={actionLoading === `unlock-${ws.id}`}
+                          className="flex-1 text-center py-1 text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300 rounded hover:bg-yellow-200 dark:hover:bg-yellow-900/50 disabled:opacity-50 transition-colors"
+                        >
+                          {actionLoading === `unlock-${ws.id}` ? '...' : 'Unlock'}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleDeleteWorkspace(ws)}
+                        disabled={actionLoading === `delete-${ws.id}`}
+                        className="flex-1 text-center py-1 text-xs bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded hover:bg-red-200 dark:hover:bg-red-900/50 disabled:opacity-50 transition-colors"
+                      >
+                        {actionLoading === `delete-${ws.id}` ? '...' : 'Delete'}
+                      </button>
+                    </div>
+                  )}
+                </div>
               ))
             )}
           </div>
@@ -250,6 +328,23 @@ export default function TFStateBrowserPage() {
                 <span className="text-xs font-mono text-blue-600 dark:text-blue-400 truncate">
                   {selectedDeploymentId} / {selectedWorkspace.workspace}
                 </span>
+              )}
+              {selectedWorkspace && (
+                selectedWorkspace.lock_id ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300 shrink-0">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                    </svg>
+                    Locked
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300 shrink-0">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M10 2a5 5 0 00-5 5v2a2 2 0 00-2 2v5a2 2 0 002 2h10a2 2 0 002-2v-5a2 2 0 00-2-2H7V7a3 3 0 015.905-.75 1 1 0 001.937-.5A5.002 5.002 0 0010 2z" />
+                    </svg>
+                    Unlocked
+                  </span>
+                )
               )}
             </div>
             {rawJson && (

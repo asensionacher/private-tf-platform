@@ -2,9 +2,11 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { tfStateApi } from '../api';
 import type { TFStateSummary } from '../types';
+import { useAuth } from '../context/AuthContext';
 
 export default function DeploymentTFStatePage() {
     const { id } = useParams<{ id: string }>();
+    const { isAdmin } = useAuth();
 
     const [states, setStates] = useState<TFStateSummary[]>([]);
     const [loading, setLoading] = useState(true);
@@ -206,7 +208,7 @@ export default function DeploymentTFStatePage() {
                                     >
                                         {inspecting === s.workspace ? 'Loading...' : 'Inspect'}
                                     </button>
-                                    {s.lock_id && (
+                                    {s.lock_id && isAdmin && (
                                         <button
                                             onClick={() => handleForceUnlock(s.workspace)}
                                             disabled={actionLoading === `unlock-${s.workspace}`}
@@ -215,6 +217,7 @@ export default function DeploymentTFStatePage() {
                                             {actionLoading === `unlock-${s.workspace}` ? 'Unlocking...' : 'Force Unlock'}
                                         </button>
                                     )}
+                                    {isAdmin && (
                                     <button
                                         onClick={() => handleDeleteWorkspace(s.workspace)}
                                         disabled={actionLoading === `delete-${s.workspace}`}
@@ -222,6 +225,7 @@ export default function DeploymentTFStatePage() {
                                     >
                                         {actionLoading === `delete-${s.workspace}` ? 'Deleting...' : 'Delete'}
                                     </button>
+                                    )}
                                 </div>
                             </div>
                         ))}
