@@ -63,6 +63,8 @@ docker compose up -d --build
 
 Open `https://registry.lan`.
 
+For a complete walkthrough — including setting up a private provider, a private module, and remote state — see **[HOWTO.md](./HOWTO.md)**.
+
 ---
 
 ## Terraform / OpenTofu CLI setup
