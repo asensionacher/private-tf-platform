@@ -16,16 +16,16 @@ http {
     # -------------------------------------------------------------------------
     server {
         listen 80;
-        server_name ${REGISTRY_HOST} api.${REGISTRY_HOST} tf.${REGISTRY_HOST};
+        server_name ${PLATFORM_REGISTRY_HOST} ${PLATFORM_API_REGISTRY_HOST} ${PLATFORM_TFSTATES_HOST};
         return 301 https://$host$request_uri;
     }
 
     # -------------------------------------------------------------------------
-    # ${REGISTRY_HOST} — Frontend UI
+    # ${PLATFORM_REGISTRY_HOST} — Frontend UI
     # -------------------------------------------------------------------------
     server {
         listen 443 ssl;
-        server_name ${REGISTRY_HOST};
+        server_name ${PLATFORM_REGISTRY_HOST};
 
         ssl_certificate     /etc/nginx/certs/server.crt;
         ssl_certificate_key /etc/nginx/certs/server.key;
@@ -45,12 +45,12 @@ http {
     }
 
     # -------------------------------------------------------------------------
-    # api.${REGISTRY_HOST} — Backend API + Terraform Registry Protocol
+    # ${PLATFORM_API_REGISTRY_HOST} — Backend API + Terraform Registry Protocol
     # Covers: /api /v1 /.well-known /downloads /shasums
     # -------------------------------------------------------------------------
     server {
         listen 443 ssl;
-        server_name api.${REGISTRY_HOST};
+        server_name ${PLATFORM_API_REGISTRY_HOST};
 
         ssl_certificate     /etc/nginx/certs/server.crt;
         ssl_certificate_key /etc/nginx/certs/server.key;
@@ -72,13 +72,13 @@ http {
     }
 
     # -------------------------------------------------------------------------
-    # tf.${REGISTRY_HOST} — Terraform HTTP State Backend
+    # ${PLATFORM_TFSTATES_HOST} — Terraform HTTP State Backend
     # Dedicated subdomain for /api/tfstate/:deploymentId
     # Supports GET / POST / DELETE / LOCK / UNLOCK
     # -------------------------------------------------------------------------
     server {
         listen 443 ssl;
-        server_name tf.${REGISTRY_HOST};
+        server_name ${PLATFORM_TFSTATES_HOST};
 
         ssl_certificate     /etc/nginx/certs/server.crt;
         ssl_certificate_key /etc/nginx/certs/server.key;

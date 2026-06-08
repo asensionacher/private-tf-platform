@@ -68,6 +68,16 @@ func main() {
 		registryHost = "registry.lan"
 	}
 
+	platformTfstatesHost := os.Getenv("PLATFORM_TFSTATES_HOST")
+	if platformTfstatesHost == "" {
+		platformTfstatesHost = "tf.registry.lan"
+	}
+
+	apiRegistryHost := os.Getenv("API_REGISTRY_HOST")
+	if apiRegistryHost == "" {
+		apiRegistryHost = "api.registry.lan"
+	}
+
 	allowedOrigins := []string{
 		"http://" + frontendHost,
 		"http://" + frontendHost + ":" + frontendPort,
@@ -78,10 +88,10 @@ func main() {
 		"https://" + backendHost,
 		"http://" + registryHost,
 		"https://" + registryHost,
-		"http://api." + registryHost,
-		"https://api." + registryHost,
-		"http://tf." + registryHost,
-		"https://tf." + registryHost,
+		"http://" + apiRegistryHost,
+		"https://" + apiRegistryHost,
+		"http://" + platformTfstatesHost,
+		"https://" + platformTfstatesHost,
 		"http://localhost:5173",
 		"https://localhost:5173",
 		"http://localhost:3000",

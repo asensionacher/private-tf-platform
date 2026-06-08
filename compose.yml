@@ -1,18 +1,18 @@
 services:
   postgres:
     image: postgres:17-alpine
-    container_name: iac-registry-postgres
+    container_name: private-tf-platform-postgres
     ports:
       - "${POSTGRES_PORT_EXTERNAL:-5432}:5432"
     environment:
       - POSTGRES_DB=registry
       - POSTGRES_USER=registry
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-registry-password-change-me}
+      - POSTGRES_PASSWORD=${PLATFORM_POSTGRES_PASSWORD:-registry-password-change-me}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     restart: unless-stopped
     networks:
-      - registry-network
+      - tf-registry-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U registry"]
       interval: 10s
@@ -23,70 +23,75 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    container_name: iac-registry-backend
+    container_name: private-tf-platform-backend
     volumes:
       - registry-data:/app/data
     environment:
       - GIN_MODE=release
       - PORT=9080
-      - BACKEND_HOST=api.${REGISTRY_HOST:-registry.lan}
-      - FRONTEND_HOST=${REGISTRY_HOST:-registry.lan}
+      - BACKEND_HOST=${API_PLATFORM_REGISTRY_HOST:-api.registry.lan}
+      - FRONTEND_HOST=${PLATFORM_REGISTRY_HOST:-registry.lan}
       - FRONTEND_PORT=443
       - VITE_DEV_PORT=5173
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=registry
       - POSTGRES_USER=registry
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-registry-password-change-me}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-to-a-secure-32-char-key!}
-      - REGISTRY_HOST=api.${REGISTRY_HOST:-registry.lan}
+      - POSTGRES_PASSWORD=${PLATFORM_POSTGRES_PASSWORD:-registry-password-change-me}
+      - ENCRYPTION_KEY=${PLATFORM_ENCRYPTION_KEY:-change-this-to-a-secure-32-char-key!}
+      - PLATFORM_REGISTRY_HOST=${PLATFORM_REGISTRY_HOST:-registry.lan}
+      - PLATFORM_API_REGISTRY_HOST=${PLATFORM_API_REGISTRY_HOST:-api.registry.lan}
+      - PLATFORM_TFSTATES_HOST=${PLATFORM_TFSTATES_REGISTRY_HOST:-tf.registry.lan}
     restart: unless-stopped
     networks:
-      - registry-network
+      - tf-registry-network
     depends_on:
       postgres:
         condition: service_healthy
 
   frontend:
+    container_name: private-tf-platform-frontend
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - VITE_REGISTRY_HOST=api.${REGISTRY_HOST:-registry.lan}
+        - VITE_REGISTRY_HOST=${PLATFORM_API_REGISTRY_HOST:-api.registry.lan}
         - VITE_REGISTRY_PORT=443
-        - VITE_API_BASE_URL=https://api.${REGISTRY_HOST:-registry.lan}/api
-    container_name: iac-registry-frontend
+        - VITE_API_BASE_URL=https://${PLATFORM_API_REGISTRY_HOST:-api.registry.lan}/api
     environment:
       - PORT=3000
     depends_on:
       - backend
     restart: unless-stopped
     networks:
-      - registry-network
+      - tf-registry-network
 
   nginx:
     image: nginx:alpine
-    container_name: iac-registry-nginx
+    container_name: private-tf-platform-nginx
     ports:
       - "80:80"
       - "443:443"
     environment:
-      - REGISTRY_HOST=${REGISTRY_HOST:-registry.lan}
+      - PLATFORM_REGISTRY_HOST=${PLATFORM_REGISTRY_HOST:-registry.lan}
+      - PLATFORM_API_REGISTRY_HOST=${PLATFORM_API_REGISTRY_HOST:-api.registry.lan}
+      - PLATFORM_TFSTATES_HOST=${PLATFORM_TFSTATES_HOST:-tf.registry.lan}
     volumes:
       - ./nginx/nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
       - ./nginx/certs:/etc/nginx/certs:ro
-    command: sh -c "envsubst '$$REGISTRY_HOST' < /etc/nginx/templates/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g 'daemon off;'"
+    command: sh -c "envsubst '$$PLATFORM_REGISTRY_HOST $$PLATFORM_API_REGISTRY_HOST $$PLATFORM_TFSTATES_HOST' < /etc/nginx/templates/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g 'daemon off;'"
     depends_on:
       - frontend
       - backend
     restart: unless-stopped
     networks:
-      - registry-network
+      - tf-registry-network
 
 volumes:
   postgres-data:
   registry-data:
 
 networks:
-  registry-network:
+  tf-registry-network:
+    name: tf-registry-network
     driver: bridge

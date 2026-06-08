@@ -49,13 +49,13 @@ sudo trust anchor --store ca.crt && sudo update-ca-trust
 
 **Debian / Ubuntu**
 ```bash
-sudo cp ca.crt /usr/local/share/ca-certificates/iac-registry-ca.crt
+sudo cp ca.crt /usr/local/share/ca-certificates/private-tf-platform-ca.crt
 sudo update-ca-certificates
 ```
 
 **RHEL / Fedora / CentOS**
 ```bash
-sudo cp ca.crt /etc/pki/ca-trust/source/anchors/iac-registry-ca.crt
+sudo cp ca.crt /etc/pki/ca-trust/source/anchors/private-tf-platform-ca.crt
 sudo update-ca-trust extract
 ```
 
